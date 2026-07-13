@@ -1869,8 +1869,28 @@
     });
   });
   document.getElementById('pushPreview').addEventListener('click', function(){
-    if(Notification.permission!=='granted'){ toast('Turn on notifications first'); return; }
-    getReg().then(function(reg){ if(reg) reg.showNotification('⏰ Glacier reminder',{body:'This is what your task reminders will look like.',icon:'/icon-192.png',badge:'/icon-192.png'}); });
+    var st=document.getElementById('pushStatus');
+    if(!('Notification' in window)){ st.textContent='Notifications aren’t supported in this browser.'; return; }
+    if(Notification.permission!=='granted'){ st.textContent='Turn on notifications first, then try Preview.'; toast('Turn on notifications first'); return; }
+    st.textContent='Sending preview…';
+    var done=false;
+    function ok(){ done=true; st.textContent='Preview sent — check your notifications (on iPhone it may land quietly in Notification Center).'; }
+    function fallback(){
+      if(done) return; done=true;
+      try{ new Notification('⏰ Glacier reminder',{body:'This is what your task reminders will look like.',icon:'/icon-192.png'}); st.textContent='Preview sent — check your notifications.'; }
+      catch(e){ st.textContent='Couldn’t show a preview on this device — real reminders from the cloud are unaffected.'; }
+    }
+    var timer=setTimeout(fallback, 1500); // serviceWorker.ready can hang forever — never leave the button silent
+    try{
+      getReg().then(function(reg){
+        if(done) return;
+        if(reg && typeof reg.showNotification==='function'){
+          Promise.resolve(reg.showNotification('⏰ Glacier reminder',{body:'This is what your task reminders will look like.',icon:'/icon-192.png',badge:'/icon-192.png'}))
+            .then(function(){ clearTimeout(timer); if(!done) ok(); })
+            .catch(function(){ clearTimeout(timer); fallback(); });
+        } else { clearTimeout(timer); fallback(); }
+      }).catch(function(){ clearTimeout(timer); fallback(); });
+    }catch(e){ clearTimeout(timer); fallback(); }
   });
   document.getElementById('pushRecheck').addEventListener('click', function(){ refreshPush().then(function(){ toast('Re-checked'); }); });
 

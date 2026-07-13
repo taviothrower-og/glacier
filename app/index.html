@@ -685,15 +685,11 @@
     <!-- ===== LEARN ===== -->
     <section class="view" data-view="learn">
       <div class="vhead"><button class="back" data-go="more">‹ More</button><div class="vtitle">Learn</div></div>
-      <div class="sec-label">Today's build tip <i>10 of 10</i></div>
-      <div class="tip">
-        <div class="k">Vibe coding</div>
-        <h3>How to vibe code well</h3>
-        <p>One clear goal at a time. Let it work, then test before moving on. Small steps beat giant ones — when something breaks, paste the exact error back. You're the director; it's the crew.</p>
-        <code>"Add a login screen using Supabase auth.
-Keep the dark baby-blue theme.
-Then stop so I can test."</code>
-      </div>
+      <div class="vsub">Pick topics you're into — Glacier serves one tip a day. Search anything.</div>
+      <div class="field" style="margin-bottom:12px"><input type="search" class="input" id="learnSearch" placeholder="Search tips — protein, debugging, sleep…" style="flex:1;width:auto"></div>
+      <div class="sec-label">Your topics</div>
+      <div id="learnTopicChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px"></div>
+      <div id="learnBody"></div>
     </section>
 
     <!-- ===== HELP ===== -->
@@ -708,7 +704,8 @@ Then stop so I can test."</code>
       <div class="help-card"><h4>📝 Notes</h4><p>Rich text notes with <b>bold</b>, <i>italic</i>, colors, sizes, and alignment. Notes are saved on this device. Tap a note to edit it.</p></div>
       <div class="help-card"><h4>🖼️ Inspo</h4><p>Upload images for your vision board. Images are <b>compressed and stored locally</b> on this device in the browser's storage (~5 MB limit). They persist between sessions but won't sync to other devices.</p></div>
       <div class="help-card"><h4>⭐ Levels & XP</h4><p>Tap the <b>LV badge</b> in the header to see your level details. You earn XP by checking habits (+40 XP each) and completing tasks (+20 XP each). Every <b>800 XP</b> = 1 level up. Levels go from <b>Rookie</b> (LV 1) all the way to <b>GOAT</b> (LV 16+).</p></div>
-      <div class="help-card"><h4>🔔 Notifications</h4><p>Glacier sends <b>branded push notifications</b> for key tasks (~8/day) even when the app is closed. Requires: (1) Install Glacier to your home screen, (2) Turn on in Reminders, (3) Copy sync code to Claude once. After that it runs automatically via a cloud scheduler.</p></div>
+      <div class="help-card"><h4>🔔 Notifications</h4><p>Glacier sends <b>branded push notifications</b> that follow <b>your own schedule</b> — any task with the 🔔 toggle on gets a push at its time, in your timezone, even when the app is closed. Setup: (1) on iPhone, add Glacier to your home screen (desktop browsers work directly), (2) tap <b>Set up</b> on the Reminders card and allow notifications, (3) be signed in on the Sync page. Every signed-in device you turn on gets reminders.</p></div>
+      <div class="help-card"><h4>⚡ Learn</h4><p>Pick topics you care about and Glacier serves <b>one tip a day</b>, rotating through the library — plus a 9 AM push if reminders are on. Use the <b>search box</b> to pull any tip on demand.</p></div>
     </section>
   </main>
 
@@ -736,14 +733,13 @@ Then stop so I can test."</code>
   <div class="sheet-head"><div class="vtitle" style="font-size:20px">Reminders</div><button class="back" id="remindClose">Close</button></div>
   <div class="healthrow"><span class="hdot" id="healthDot"></span><span id="healthText">Checking…</span></div>
   <div id="pushSetup" style="display:none">
-    <div class="muted-note" style="margin:12px 0">Glacier-branded pings — your logo on the lock screen — even when the app is closed. Works once Glacier is on your home screen.</div>
+    <div class="muted-note" style="margin:12px 0">Glacier-branded pings — even when the app is closed. On iPhone, add Glacier to your home screen first. Reminders follow your own timeline: any task with the 🔔 toggle on gets a push at its time.</div>
     <button class="btn go" id="pushOn" style="width:100%">Turn on notifications</button>
   </div>
-  <div id="pushSync" style="display:none">
-    <div class="muted-note" style="margin:12px 0 8px">One-time: copy this code and paste it to Claude to activate cloud delivery.</div>
-    <div class="topicbox"><span id="pushCode">—</span><button class="btn ghost" id="pushCopy">Copy</button></div>
+  <div id="pushSignin" style="display:none">
+    <div class="muted-note" style="margin:12px 0">Almost there — reminders are delivered through your account so they follow your schedule. <b>Sign in on the Sync page</b> to finish.</div>
   </div>
-  <div class="rrow" style="margin-top:12px"><button class="btn ghost" id="pushPreview">Preview look</button><button class="btn ghost" id="pushRecheck">Re-check</button></div>
+  <div class="rrow" style="margin-top:12px"><button class="btn ghost" id="pushPreview">Preview look</button><button class="btn ghost" id="pushRecheck">Re-check</button><button class="btn ghost" id="pushOff" style="display:none">Turn off</button></div>
   <div class="muted-note" id="pushStatus" style="margin-top:12px"></div>
   <div class="muted-note" style="margin-top:8px;opacity:.65">Delivered straight from Glacier — no other app needed.</div>
 </div></div>
@@ -769,6 +765,11 @@ Then stop so I can test."</code>
       <div class="pri-opt" data-p="1">Low</div>
       <div class="pri-opt" data-p="2">Medium</div>
       <div class="pri-opt" data-p="3">High</div>
+    </div>
+    <label class="flabel">Reminder</label>
+    <div class="pri-bar" id="remindBar">
+      <div class="pri-opt" data-r="1">🔔 Notify me</div>
+      <div class="pri-opt" data-r="0">Silent</div>
     </div>
   </div>
   <div class="rrow" style="margin-top:18px">
@@ -839,6 +840,18 @@ Then stop so I can test."</code>
   // Schedule lives in the store (synced + private); owner devices restore it via
   // cloud sync. Fresh installs start with an empty timeline.
   if(!store.schedDefs) store.schedDefs={workDays:['Monday','Tuesday','Wednesday','Thursday','Friday'],byDay:{}};
+  if(!store.learnTopics) store.learnTopics = store.legacyOwner ? ['vibe'] : [];
+  if(!store.groupDefs) store.groupDefs = GROUPS.map(function(g){return {key:g.key,label:g.label};});
+  // One-time: flag the owner's key task times so multi-user reminders match the
+  // original ~8/day cadence.
+  if(store.legacyOwner && !store.remindMigrated && store.schedDefs.byDay){
+    var KEYW=['06:45','07:00','11:30','16:00','18:30','21:30','23:10'], KEYO=['07:30','07:50','10:15','12:00','15:00','21:30','23:10'];
+    Object.keys(store.schedDefs.byDay).forEach(function(d){
+      var keys=store.schedDefs.workDays.indexOf(d)>=0?KEYW:KEYO;
+      (store.schedDefs.byDay[d]||[]).forEach(function(b){ (b.tasks||[]).forEach(function(t){ if(keys.indexOf(t.t)>=0) t.remind=true; }); });
+    });
+    store.remindMigrated=1;
+  }
 
   function save(){ try{ localStorage.setItem(KEY,JSON.stringify(store)); queueSync(); return true; }catch(e){ return false; } }
 
@@ -954,7 +967,7 @@ Then stop so I can test."</code>
     sb.auth.onAuthStateChange(function(ev,session){
       syncUser=session?session.user:null;
       renderSyncView();
-      if(syncUser&&(ev==='SIGNED_IN'||ev==='INITIAL_SESSION')) pullSync();
+      if(syncUser&&(ev==='SIGNED_IN'||ev==='INITIAL_SESSION')){ pullSync(); if(typeof refreshPush==='function') setTimeout(refreshPush,500); }
     });
   }
   save();
@@ -1039,9 +1052,23 @@ Then stop so I can test."</code>
 
   function renderHabits(){
     var c=document.getElementById('habitGroups'); c.innerHTML='';
-    GROUPS.forEach(function(g){
+    store.groupDefs.forEach(function(g){
       var habits=store.habitDefs.filter(function(h){return h.group===g.key});
-      var gh=document.createElement('div'); gh.className='grouphead'; gh.textContent=g.label; c.appendChild(gh);
+      var gh=document.createElement('div'); gh.className='grouphead'; gh.style.cursor='pointer'; gh.title='Tap to rename';
+      gh.textContent=g.label+' ✎';
+      gh.addEventListener('click',function(){
+        var nl=prompt('Group name (leave empty to delete an empty group):',g.label);
+        if(nl===null) return;
+        nl=nl.trim();
+        if(!nl){
+          if(habits.length){ toast('Move or delete its habits first'); return; }
+          if(!confirm('Delete group "'+g.label+'"?')) return;
+          store.groupDefs=store.groupDefs.filter(function(x){return x.key!==g.key});
+          save(); renderHabits(); toast('Group deleted'); return;
+        }
+        g.label=nl; save(); renderHabits();
+      });
+      c.appendChild(gh);
       var bento=document.createElement('div'); bento.className='bento'; bento.setAttribute('data-hgroup','');
       habits.forEach(function(h){ bento.appendChild(makeBox(h)); });
       c.appendChild(bento);
@@ -1049,6 +1076,14 @@ Then stop so I can test."</code>
       var ab=document.createElement('button'); ab.className='btn ghost sm'; ab.textContent='＋ Add habit';
       ab.addEventListener('click',function(){ openNewHabitEditor(g.key); }); ar.appendChild(ab); c.appendChild(ar);
     });
+    var gr=document.createElement('div'); gr.className='add-row'; gr.style.marginTop='18px';
+    var gb=document.createElement('button'); gb.className='btn ghost sm'; gb.textContent='＋ Add group';
+    gb.addEventListener('click',function(){
+      var nl=prompt('New group name:',''); if(!nl||!nl.trim()) return;
+      store.groupDefs.push({key:'g'+Date.now(),label:nl.trim()});
+      save(); renderHabits(); toast('Group added');
+    });
+    gr.appendChild(gb); c.appendChild(gr);
   }
 
   // ===== STREAKS RENDERING =====
@@ -1073,7 +1108,7 @@ Then stop so I can test."</code>
   document.getElementById('addStreak').addEventListener('click',function(){ openNewStreakEditor(); });
 
   // ===== DETAIL MODAL (edit habits/streaks/tasks) =====
-  var detailMode=null, detailId=null, detailEmoji='💡', detailPri=0;
+  var detailMode=null, detailId=null, detailEmoji='💡', detailPri=0, detailRemind=0, detailDayKey=null;
   var emojiGrid=document.getElementById('emojiGrid');
   EMOJIS.forEach(function(e){
     var b=document.createElement('div'); b.className='emoji-opt'; b.textContent=e;
@@ -1083,9 +1118,12 @@ Then stop so I can test."</code>
   document.querySelectorAll('#priBar .pri-opt').forEach(function(p){
     p.addEventListener('click',function(){ detailPri=+p.dataset.p; document.querySelectorAll('#priBar .pri-opt').forEach(function(x){x.classList.remove('on')}); p.classList.add('on'); });
   });
+  document.querySelectorAll('#remindBar .pri-opt').forEach(function(p){
+    p.addEventListener('click',function(){ detailRemind=+p.dataset.r; document.querySelectorAll('#remindBar .pri-opt').forEach(function(x){x.classList.remove('on')}); p.classList.add('on'); });
+  });
 
   function openDetailSheet(mode,opts){
-    detailMode=mode; detailId=opts.id||null; detailEmoji=opts.emoji||'💡'; detailPri=opts.pri||0;
+    detailMode=mode; detailId=opts.id||null; detailEmoji=opts.emoji||'💡'; detailPri=opts.pri||0; detailRemind=opts.remind?1:0;
     document.getElementById('detailTitle').textContent=opts.title||'Edit';
     document.getElementById('detailName').value=opts.name||'';
     document.getElementById('detailDesc').value=opts.desc||'';
@@ -1096,6 +1134,7 @@ Then stop so I can test."</code>
     document.getElementById('detailDel').style.display=opts.canDelete?'block':'none';
     emojiGrid.querySelectorAll('.emoji-opt').forEach(function(x){ x.classList.toggle('on',x.textContent===detailEmoji); });
     document.querySelectorAll('#priBar .pri-opt').forEach(function(x){ x.classList.toggle('on',+x.dataset.p===detailPri); });
+    document.querySelectorAll('#remindBar .pri-opt').forEach(function(x){ x.classList.toggle('on',+x.dataset.r===detailRemind); });
     document.getElementById('detailSheet').classList.add('on');
   }
   function closeDetail(){ document.getElementById('detailSheet').classList.remove('on'); }
@@ -1120,17 +1159,22 @@ Then stop so I can test."</code>
   }
   function openNewTaskEditor(){
     var nid='ut_'+Date.now();
-    openDetailSheet('task',{id:nid,emoji:'',name:'',desc:'',title:'Add Task',time:'12:00',pri:0,canDelete:false});
+    openDetailSheet('task',{id:nid,emoji:'',name:'',desc:'',title:'Add Task',time:'12:00',pri:0,remind:true,canDelete:false});
     detailId=nid; detailMode='newtask';
   }
   function openTaskEditor(ut){
-    openDetailSheet('task',{id:ut.id,name:ut.title,desc:ut.note,title:'Edit Task',time:ut.time,pri:ut.pri||0,canDelete:true});
+    openDetailSheet('task',{id:ut.id,name:ut.title,desc:ut.note,title:'Edit Task',time:ut.time,pri:ut.pri||0,remind:ut.remind!==false,canDelete:true});
     detailMode='edittask';
   }
   function openBuiltInTaskEditor(el){
-    var title=el.dataset.title||'', note=el.dataset.note||'', time=el.dataset.t||'12:00';
+    var day=DAYS[new Date().getDay()];
+    var bi=+el.dataset.bi, ti=+el.dataset.ti;
+    var blocks=(store.schedDefs.byDay&&store.schedDefs.byDay[day])||[];
+    var t=blocks[bi]&&blocks[bi].tasks&&blocks[bi].tasks[ti];
+    if(!t) return;
     var pk=el.dataset.k; var pri=store.priorities[pk]||0;
-    openDetailSheet('task',{id:pk,name:title,desc:note,title:'Edit Task',time:time,pri:pri,canDelete:false});
+    detailDayKey={day:day,bi:bi,ti:ti,pk:pk};
+    openDetailSheet('task',{id:pk,name:t.title,desc:t.note||'',title:'Edit Task',time:t.t,pri:pri,remind:!!t.remind,canDelete:false});
     detailMode='editbuiltin';
   }
 
@@ -1146,12 +1190,17 @@ Then stop so I can test."</code>
       store.streakDefs.push({id:detailId,emoji:detailEmoji,name:name,desc:document.getElementById('detailDesc').value.trim()});
       store['streak_'+detailId]=0;
     } else if(detailMode==='newtask'){
-      store.userTasks.push({id:detailId,title:name,note:document.getElementById('detailDesc').value.trim(),time:document.getElementById('detailTime').value,pri:detailPri});
+      store.userTasks.push({id:detailId,title:name,note:document.getElementById('detailDesc').value.trim(),time:document.getElementById('detailTime').value,pri:detailPri,remind:!!detailRemind});
     } else if(detailMode==='edittask'){
       var ut=store.userTasks.find(function(x){return x.id===detailId});
-      if(ut){ ut.title=name; ut.note=document.getElementById('detailDesc').value.trim(); ut.time=document.getElementById('detailTime').value; ut.pri=detailPri; }
+      if(ut){ ut.title=name; ut.note=document.getElementById('detailDesc').value.trim(); ut.time=document.getElementById('detailTime').value; ut.pri=detailPri; ut.remind=!!detailRemind; }
     } else if(detailMode==='editbuiltin'){
       store.priorities[detailId]=detailPri;
+      if(detailDayKey){
+        var blocks2=(store.schedDefs.byDay&&store.schedDefs.byDay[detailDayKey.day])||[];
+        var bt=blocks2[detailDayKey.bi]&&blocks2[detailDayKey.bi].tasks&&blocks2[detailDayKey.bi].tasks[detailDayKey.ti];
+        if(bt){ bt.title=name; bt.note=document.getElementById('detailDesc').value.trim(); bt.t=document.getElementById('detailTime').value; bt.remind=!!detailRemind; }
+      }
     }
     save(); closeDetail(); renderQuickHabits(); renderHabits(); renderStreaks(); renderTimeline(); toast('Saved'); refreshMeta();
   });
@@ -1182,6 +1231,7 @@ Then stop so I can test."</code>
     if(name==='stats') renderStats();
     if(name==='sync') renderSyncView();
     if(name==='goals') renderGoals();
+    if(name==='learn') renderLearn();
   }
   document.querySelectorAll('[data-go]').forEach(function(el){
     el.addEventListener('click',function(){ setView(el.getAttribute('data-go')); });
@@ -1318,6 +1368,134 @@ Then stop so I can test."</code>
     var g=prompt('Goal weight (lbs):',store.goal); var n=g?parseFloat(g):NaN;
     if(n&&n>80&&n<500){ store.goal=n; save(); renderBody(); toast('Goal set to '+n+' lbs'); }
   });
+
+  // ===== LEARN (curated topic library) =====
+  var TOPICS=[
+    {id:'vibe',name:'Vibe Coding',emoji:'⚡',tips:[
+      {h:'One clear goal at a time',p:'Let the AI work, then test before moving on. Small steps beat giant ones — when something breaks, paste the exact error back. You\'re the director; it\'s the crew.',code:'"Add a login screen using Supabase auth.\nKeep the dark theme.\nThen stop so I can test."'},
+      {h:'Describe the outcome, not the code',p:'Say what the user should see and do, not which functions to write. The clearer the destination, the better the route.',code:'"When I tap a habit it should check off with a satisfying animation and +40 XP."'},
+      {h:'Paste the whole error',p:'Never summarize an error message. Copy the exact text, say what you did right before it appeared, and what you expected instead.'},
+      {h:'Test after every change',p:'One change → one test. If you batch five changes and something breaks, you\'re debugging five suspects instead of one.'},
+      {h:'Keep a running TODO note',p:'Every idea goes in the note, not in the current prompt. Finish the thing on the bench before starting the next.'},
+      {h:'Ask for explanations',p:'"Explain what this change did in plain English" after big edits. You\'ll learn the codebase without reading code.'},
+      {h:'Version control is your undo button',p:'Commit (or ask the AI to) after every working state. Fearless experiments come from cheap rollbacks.'},
+      {h:'Describe taste with references',p:'"Like the iOS Fitness app rings" beats three paragraphs of design description. Screenshots beat everything.'}
+    ]},
+    {id:'strength',name:'Training',emoji:'💪',tips:[
+      {h:'Consistency beats intensity',p:'Three okay workouts a week for a year destroys one perfect week a month. Schedule them like meetings.'},
+      {h:'Progressive overload is the whole game',p:'Add a rep, a pound, or a set each week. If the numbers aren\'t slowly climbing, you\'re maintaining, not building.'},
+      {h:'Compound lifts first',p:'Squat, hinge, push, pull, carry. Do these while fresh; save isolation work for the end.'},
+      {h:'Walking is criminally underrated',p:'A 20-minute walk burns fat, clears your head, and needs zero recovery. It\'s the highest-adherence exercise that exists.'},
+      {h:'Rest days build the muscle',p:'Training tears it down; sleep and food rebuild it stronger. Skipping recovery is skipping gains.'},
+      {h:'Track your workouts',p:'What gets measured gets improved. Last week\'s numbers are today\'s target.'},
+      {h:'Warm up with what you\'re about to do',p:'Lighter sets of the same movement beat 10 minutes of random stretching.'},
+      {h:'The best program is one you\'ll repeat',p:'Novelty is for content creators. Boring, repeated, progressively heavier — that\'s how bodies change.'}
+    ]},
+    {id:'nutrition',name:'Eating Better',emoji:'🥦',tips:[
+      {h:'Protein first at every meal',p:'It\'s the most filling macro, protects muscle in a deficit, and costs the most calories to digest. Build the plate around it.'},
+      {h:'Calories are the budget, food is the spending',p:'You can\'t out-train a surplus. A modest daily deficit (300–700 kcal) loses fat at a pace you can actually sustain.'},
+      {h:'Drink water before you snack',p:'Thirst wears a hunger costume. A big glass of water kills half of phantom cravings.'},
+      {h:'Plan the exception, don\'t improvise it',p:'One planned treat beats five "it just happened" ones. Decide in advance when and what.'},
+      {h:'Fiber is the cheat code',p:'Vegetables and fruit fill you up for almost nothing. A cup of veg at every meal changes everything downstream.'},
+      {h:'Liquid calories are stealth calories',p:'Sodas, juices, fancy coffees — hundreds of calories with zero fullness. Drink water, eat your calories.'},
+      {h:'Sleep controls hunger',p:'One short night spikes ghrelin (hunger) and drops leptin (fullness). The diet starts the night before.'},
+      {h:'Same breakfast every day is fine',p:'Decision fatigue kills diets. Automate one or two meals and spend your willpower elsewhere.'}
+    ]},
+    {id:'money',name:'Money Basics',emoji:'💰',tips:[
+      {h:'Pay yourself first',p:'Move savings out the moment income lands — automatically. What\'s left is what you can spend, not the other way around.'},
+      {h:'Know your monthly number',p:'One list: every bill, its amount, its date. You can\'t steer what you can\'t see. Review it monthly.'},
+      {h:'The emergency fund buys calm',p:'3–6 months of expenses in a boring savings account. It turns disasters into inconveniences.'},
+      {h:'High-interest debt is a fire',p:'Nothing you invest in reliably beats 25% credit-card interest. Put the fire out first.'},
+      {h:'Automate, then ignore',p:'Automatic transfers beat discipline. The best money system is the one that runs when you forget about it.'},
+      {h:'Lifestyle creep eats raises',p:'When income rises, raise your saving rate first, your lifestyle second.'},
+      {h:'Track spending for one month',p:'Not forever — once. Most people find 2–3 leaks they can close in an afternoon.'},
+      {h:'Time in the market beats timing',p:'Boring index funds, bought consistently, held for years. The strategy fits on an index card because it works.'}
+    ]},
+    {id:'focus',name:'Deep Work',emoji:'🎯',tips:[
+      {h:'Hardest thing first',p:'Your willpower peaks in the first work hour. Spend it on the task you\'re most likely to avoid at 4 PM.'},
+      {h:'Phone in another room',p:'Not face down. Not in the pocket. Another room. Its mere presence measurably drains attention.'},
+      {h:'Work in blocks, rest on purpose',p:'25–90 minutes of single-tasking, then an intentional break — stand, water, look far away. Repeat.'},
+      {h:'Write tomorrow\'s top 3 tonight',p:'Two minutes before bed saves twenty minutes of morning dithering, and your brain preloads the work while you sleep.'},
+      {h:'One tab, one task',p:'Every open tab is a promise to interrupt yourself. Close them; they\'ll survive in a bookmark.'},
+      {h:'Batch the shallow stuff',p:'Messages, email, errands — one or two windows a day. Checking constantly costs a re-focus tax every time.'},
+      {h:'Done lists beat todo lists',p:'At day\'s end, write what you finished. Momentum is a feeling you can manufacture.'},
+      {h:'Boredom is training',p:'Every time you wait in line without the phone, you\'re repping the focus muscle.'}
+    ]},
+    {id:'sleep',name:'Better Sleep',emoji:'😴',tips:[
+      {h:'Same wake time, every day',p:'Your body clock anchors to when you get up, not when you lie down. Weekends included — sorry.'},
+      {h:'Morning light is the master switch',p:'Ten minutes of outdoor light within an hour of waking sets tonight\'s melatonin timer.'},
+      {h:'Cut caffeine 8+ hours before bed',p:'The half-life is long. A 3 PM coffee is still 25% in your blood at 11 PM.'},
+      {h:'Cool, dark, quiet',p:'65–68°F, blackout dark, silent or white noise. Your bedroom is a cave with better sheets.'},
+      {h:'No big meals near bedtime',p:'Late heavy food means reflux and shallow sleep. Finish eating 2–3 hours before lights out.'},
+      {h:'Screens dim, brains dim',p:'The last hour is wind-down: stretch, shower, paper book. Blue light and doomscrolls tell your brain it\'s noon.'},
+      {h:'The bed is for sleep',p:'Can\'t sleep after 20 minutes? Get up, do something boring in dim light, come back sleepy. Train the association.'},
+      {h:'Alcohol fakes sleep',p:'It knocks you out, then wrecks the second half of the night. Sedation is not sleep.'}
+    ]},
+    {id:'selfcare',name:'Self-Care',emoji:'🧴',tips:[
+      {h:'SPF is the anti-aging routine',p:'Daily sunscreen beats every serum ever sold. Rain or shine — UVA comes through clouds and windows.'},
+      {h:'Cleanse gently, twice',p:'Morning rinse, evening proper cleanse. Stripping your skin dry makes it produce more oil, not less.'},
+      {h:'Moisturize while damp',p:'Lock water in within a minute of washing. Damp skin absorbs; dry skin repels.'},
+      {h:'Consistency beats products',p:'A three-step routine done daily outperforms a ten-step routine done sometimes. Boring wins again.'},
+      {h:'Floss the teeth you want to keep',p:'Brushing cleans surfaces; floss cleans the 35% brushes can\'t reach. Gums decide how long teeth stay.'},
+      {h:'Hands off the face',p:'Touching, picking, leaning on your palm — that\'s oil, bacteria, and friction applied hourly.'},
+      {h:'Satin pillowcase, quiet upgrade',p:'Less friction on hair and skin for eight hours a night. Cheapest beauty product per hour of use.'},
+      {h:'Hydration shows up on your skin first',p:'Dull, tight, flaky? Drink water before buying products.'}
+    ]},
+    {id:'brand',name:'Building a Brand',emoji:'🚀',tips:[
+      {h:'Ship before you\'re ready',p:'Version one should embarrass you slightly. Feedback from real people beats months of private polishing.'},
+      {h:'Consistency is the algorithm hack',p:'Posting daily for 90 days teaches you more than any course. Volume creates the luck.'},
+      {h:'Document, don\'t create',p:'Sharing what you\'re building and learning is infinite content. Inventing content from nothing burns out.'},
+      {h:'One niche, one platform, one year',p:'Spreading across five platforms divides your compounding by five. Win somewhere first.'},
+      {h:'The niche is you at full specificity',p:'"Fitness" is taken. "Former night-shift worker getting lean on a budget" is wide open.'},
+      {h:'Study what you stopped scrolling for',p:'Your own behavior is free market research. Save hooks that caught you; steal the structure, not the words.'},
+      {h:'Engagement is a two-way street',p:'Reply to every early comment. The first 100 true fans are hand-made, not algorithm-delivered.'},
+      {h:'Sell something small, early',p:'A $5 product teaches you pricing, delivery, and what people actually want — lessons followers can\'t teach.'}
+    ]}
+  ];
+  function renderLearn(){
+    var chips=document.getElementById('learnTopicChips'), body=document.getElementById('learnBody');
+    chips.innerHTML='';
+    TOPICS.forEach(function(t){
+      var on=store.learnTopics.indexOf(t.id)>=0;
+      var b=document.createElement('button'); b.className='btn sm '+(on?'go':'ghost');
+      b.textContent=t.emoji+' '+t.name;
+      b.addEventListener('click',function(){
+        if(on) store.learnTopics=store.learnTopics.filter(function(x){return x!==t.id});
+        else store.learnTopics.push(t.id);
+        save(); renderLearn();
+      });
+      chips.appendChild(b);
+    });
+    var q=(document.getElementById('learnSearch').value||'').trim().toLowerCase();
+    body.innerHTML='';
+    function tipCard(topic,tip){
+      var d=document.createElement('div'); d.className='tip';
+      var html='<div class="k">'+esc(topic.emoji+' '+topic.name)+'</div><h3>'+esc(tip.h)+'</h3><p>'+esc(tip.p)+'</p>';
+      if(tip.code) html+='<code>'+esc(tip.code)+'</code>';
+      d.innerHTML=html; return d;
+    }
+    if(q){
+      var hits=0;
+      TOPICS.forEach(function(t){ t.tips.forEach(function(tip){
+        if(hits>=10) return;
+        if((t.name+' '+tip.h+' '+tip.p).toLowerCase().indexOf(q)>=0){ body.appendChild(tipCard(t,tip)); hits++; }
+      });});
+      if(!hits) body.innerHTML='<div class="empty">No tips match "'+esc(q)+'" — try another word.</div>';
+      return;
+    }
+    var pool=[];
+    TOPICS.forEach(function(t){ if(store.learnTopics.indexOf(t.id)>=0) t.tips.forEach(function(tip){ pool.push({t:t,tip:tip}); }); });
+    if(!pool.length){
+      body.innerHTML='<div class="empty">Pick a topic above to start getting a daily tip — or search the whole library.</div>';
+      return;
+    }
+    var dayN=Math.floor(Date.now()/86400000);
+    var pick=pool[dayN%pool.length];
+    var lab=document.createElement('div'); lab.className='sec-label';
+    lab.innerHTML='Today\'s tip <i>'+((dayN%pool.length)+1)+' of '+pool.length+'</i>';
+    body.appendChild(lab); body.appendChild(tipCard(pick.t,pick.tip));
+  }
+  document.getElementById('learnSearch').addEventListener('input',function(){ renderLearn(); });
 
   // ===== GOALS (owner playbook vs personal list) =====
   // The owner's playbook is private data: cached in store.goalsHtml, fetched
@@ -1610,33 +1788,52 @@ Then stop so I can test."</code>
   function health(){
     if(!pushSupported) return 'unsupported';
     if(Notification.permission==='denied') return 'blocked';
+    if(store.pushOff) return 'off';
     if(Notification.permission!=='granted' || !store.pushSub) return 'off';
-    if(store.pushSyncedEndpoint !== (store.pushSub && store.pushSub.endpoint)) return 'needsync';
+    if(!syncUser) return 'signin';
+    if(store.pushSyncedEndpoint !== (store.pushSub && store.pushSub.endpoint)) return 'registering';
     return 'healthy';
   }
   function renderHealth(){
     var h=health();
-    var map={ unsupported:['bad','Not supported here — open Glacier from your home screen'], blocked:['bad','Blocked — allow notifications in iPhone Settings'], off:['warn','Off — tap Turn on below'], needsync:['warn','Almost there — send your sync code'], healthy:['ok','Healthy — Glacier notifications are on'] };
+    var map={ unsupported:['bad','Not supported here — open Glacier from your home screen'], blocked:['bad','Blocked — allow notifications in Settings'], off:['warn','Off — tap Turn on below'], signin:['warn','Sign in on the Sync page to activate'], registering:['warn','Registering this device…'], healthy:['ok','Healthy — reminders follow your schedule'] };
     var dot=document.getElementById('healthDot'), txt=document.getElementById('healthText');
     if(dot&&txt){ dot.className='hdot '+map[h][0]; txt.textContent=map[h][1]; }
-    var setup=document.getElementById('pushSetup'), sync=document.getElementById('pushSync');
+    var setup=document.getElementById('pushSetup'), signin=document.getElementById('pushSignin'), off=document.getElementById('pushOff');
     if(setup) setup.style.display=(h==='off')?'block':'none';
-    if(sync){
-      var showSync = !!(store.pushSub && store.pushSyncedEndpoint!==store.pushSub.endpoint);
-      sync.style.display=showSync?'block':'none';
-      if(showSync){ var c=document.getElementById('pushCode'); if(c) c.textContent=btoa(JSON.stringify(store.pushSub)); }
-    }
+    if(signin) signin.style.display=(h==='signin')?'block':'none';
+    if(off) off.style.display=(h==='healthy')?'inline-block':'none';
     var card=document.getElementById('remindCard'), btn=document.getElementById('remindBtn'), sub=document.getElementById('remindSub');
     if(card){
-      if(h==='healthy'){ card.classList.add('on'); sub.textContent='On · Glacier notifications'; btn.textContent='Manage'; }
-      else if(h==='needsync'){ card.classList.add('on'); sub.textContent='⚠ Send your sync code to finish'; btn.textContent='Finish'; }
+      if(h==='healthy'){ card.classList.add('on'); sub.textContent='On · reminders follow your schedule'; btn.textContent='Manage'; }
+      else if(h==='signin'||h==='registering'){ card.classList.add('on'); sub.textContent=map[h][1]; btn.textContent='Finish'; }
       else { card.classList.remove('on'); sub.textContent='Tap to turn on notifications'; btn.textContent='Set up'; }
     }
   }
+  // Register this device in the cloud so the reminder server can reach it.
+  function registerDevice(){
+    if(!sb||!syncUser||!store.pushSub||!store.pushSub.endpoint) { renderHealth(); return Promise.resolve(); }
+    var tz='America/Los_Angeles';
+    try{ tz=Intl.DateTimeFormat().resolvedOptions().timeZone||tz; }catch(e){}
+    return sb.from('push_subs').upsert({user_id:syncUser.id,endpoint:store.pushSub.endpoint,sub:store.pushSub,tz:tz,enabled:true,updated_at:new Date().toISOString()}).then(function(res){
+      if(!res.error){ store.pushSyncedEndpoint=store.pushSub.endpoint; writeLocal(); }
+      renderHealth();
+    });
+  }
+  function unregisterDevice(){
+    if(!sb||!syncUser||!store.pushSub) return Promise.resolve();
+    return sb.from('push_subs').delete().eq('user_id',syncUser.id).eq('endpoint',store.pushSub.endpoint).then(function(){});
+  }
   function refreshPush(){
-    if(!pushSupported || Notification.permission!=='granted'){ renderHealth(); return Promise.resolve(); }
+    if(!pushSupported || store.pushOff || Notification.permission!=='granted'){ renderHealth(); return Promise.resolve(); }
     return currentSub().then(function(sub){ return sub||doSubscribe(); }).then(function(sub){
-      if(sub){ store.pushSub=subJSON(sub); if(store.pushSyncedEndpoint && store.pushSyncedEndpoint!==sub.endpoint) store.pushNeedsSync=true; save(); }
+      if(sub){
+        var rotated = store.pushSub && store.pushSub.endpoint!==subJSON(sub).endpoint;
+        store.pushSub=subJSON(sub);
+        if(rotated) store.pushSyncedEndpoint=null;
+        writeLocal();
+        if(store.pushSyncedEndpoint!==store.pushSub.endpoint) return registerDevice();
+      }
       renderHealth();
     });
   }
@@ -1651,18 +1848,21 @@ Then stop so I can test."</code>
     var pP = Notification.permission==='granted' ? Promise.resolve('granted') : Notification.requestPermission();
     pP.then(function(perm){
       if(perm!=='granted'){ st.textContent='Permission not granted.'; renderHealth(); return; }
+      store.pushOff=false; writeLocal();
       return doSubscribe().then(function(sub){
-        if(!sub){ st.textContent='Could not subscribe — make sure Glacier is added to your home screen.'; renderHealth(); return; }
+        if(!sub){ st.textContent='Could not subscribe — on iPhone, make sure Glacier is added to your home screen.'; renderHealth(); return; }
         store.pushSub=subJSON(sub); store.pushSyncedEndpoint=null; save();
-        st.textContent='On! Copy your code below and send it to Claude to activate.'; renderHealth();
+        if(syncUser){ st.textContent='On! This device is registered — reminders follow your schedule.'; registerDevice(); }
+        else { st.textContent='Almost there — sign in on the Sync page to activate delivery.'; renderHealth(); }
       });
     });
   });
-  document.getElementById('pushCopy').addEventListener('click', function(){
-    var code=document.getElementById('pushCode').textContent;
-    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(function(){ toast('Code copied — paste it to Claude'); }, function(){ toast('Select + copy the code'); });
-    if(store.pushSub){ store.pushSyncedEndpoint=store.pushSub.endpoint; save(); }
-    renderHealth();
+  document.getElementById('pushOff').addEventListener('click', function(){
+    unregisterDevice().then(function(){
+      store.pushSyncedEndpoint=null; store.pushOff=true; writeLocal();
+      document.getElementById('pushStatus').textContent='Reminders off for this device.';
+      renderHealth(); toast('Reminders off');
+    });
   });
   document.getElementById('pushPreview').addEventListener('click', function(){
     if(Notification.permission!=='granted'){ toast('Turn on notifications first'); return; }

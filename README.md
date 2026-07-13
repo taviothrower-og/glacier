@@ -35,7 +35,7 @@ supabase/
 
 1. **Deploy the app**: drop the `app/` folder on any static host (Vercel, Netlify, Pages). Done — it works local-only out of the box.
 2. **Cloud sync (optional)**: create a free [Supabase](https://supabase.com) project, run `supabase/glacier-schema.sql` in its SQL editor, then set `SB_URL` and `SB_KEY` (anon key) near the top of `index.html`.
-3. **Push reminders (optional)**: generate VAPID keys (`npx web-push generate-vapid-keys`), set env vars on your host — `VAPID_PUBLIC`, `VAPID_PRIVATE`, `VAPID_SUBJECT`, `TICK_SECRET`, `PUSH_SUBSCRIPTION` (your device's subscription JSON), `REMINDER_SCHEDULE` (per-weekday task JSON, see `api/tick.js`) — and point an external cron (e.g. cron-job.org) at `/api/tick?key=<TICK_SECRET>` every 5 minutes.
+3. **Push reminders (optional, needs step 2)**: generate VAPID keys (`npx web-push generate-vapid-keys`), set env vars on your host — `VAPID_PUBLIC` (also update it in `index.html`), `VAPID_PRIVATE`, `VAPID_SUBJECT`, `TICK_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE` — and point an external cron (e.g. cron-job.org) at `/api/tick?key=<TICK_SECRET>` every 5 minutes. Each signed-in device that turns on notifications registers itself; every user gets their own schedule in their own timezone.
 
 ## License
 

@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070B12">
+<title>GLACIER — Build the day</title>
+<meta name="description" content="A daily system carved in ice. Schedule, habits, streaks, and stats — one fast file, everywhere you are.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070B12; --bg2:#0A1019; --panel:#0D1420; --line:rgba(151,180,214,.09); --line2:rgba(151,180,214,.16);
+    --text:#E8EEF6; --muted:#8493A8; --dim:#57657C;
+    --ice:#8FB8E8; --ice-deep:#4E7FB5; --snow:#EAF2FB;
+    --font:'Outfit',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,monospace;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:auto}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::selection{background:rgba(143,184,232,.25)}
+
+  /* ---- fixed render layers ---- */
+  #sky,#gl,#snow{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+  #sky{z-index:0} #gl{z-index:1} #snow{z-index:2}
+  #grain{position:fixed;inset:0;z-index:3;pointer-events:none;opacity:.05;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")}
+  #progress{position:fixed;top:0;left:0;right:0;height:2px;z-index:40;background:transparent}
+  #progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--ice-deep),var(--ice));transition:none}
+
+  /* ---- chrome ---- */
+  header{position:fixed;top:0;left:0;right:0;z-index:30;display:flex;justify-content:space-between;align-items:center;
+    padding:22px clamp(20px,4vw,56px)}
+  .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+  .brand svg{width:22px;height:22px}
+  .brand b{font-size:14px;font-weight:700;letter-spacing:.42em}
+  .openapp{font-size:13px;font-weight:600;color:var(--text);text-decoration:none;letter-spacing:.02em;
+    padding:9px 18px;border:1px solid var(--line2);border-radius:99px;background:rgba(13,20,32,.55);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:inset 0 1px 0 rgba(232,238,246,.06);transition:border-color .25s,transform .15s}
+  .openapp:hover{border-color:rgba(143,184,232,.45)}
+  .openapp:active{transform:scale(.97)}
+
+  /* ---- layout ---- */
+  main{position:relative;z-index:10}
+  .wrap{max-width:1280px;margin:0 auto;padding:0 clamp(20px,4vw,56px)}
+  section{min-height:100vh;min-height:100dvh;display:flex;align-items:center;position:relative}
+
+  .kicker{font-family:var(--mono);font-size:11.5px;font-weight:600;letter-spacing:.28em;color:var(--ice);text-transform:uppercase}
+  h1{font-size:clamp(64px,11vw,164px);line-height:.92;font-weight:800;letter-spacing:-.035em;text-wrap:balance}
+  h2{font-size:clamp(34px,4.6vw,58px);line-height:1.02;font-weight:700;letter-spacing:-.025em;text-wrap:balance}
+  .lede{font-size:clamp(16px,1.6vw,19px);line-height:1.65;color:var(--muted);max-width:56ch;font-weight:400}
+  .lede b{color:var(--text);font-weight:600}
+
+  /* hero */
+  #hero .wrap{width:100%}
+  #hero .stack{max-width:820px}
+  #hero h1 span{color:var(--ice)}
+  #hero .sub{margin-top:26px}
+  .statrow{display:flex;gap:clamp(18px,3.4vw,44px);margin-top:44px;flex-wrap:wrap}
+  .stat{border-top:1px solid var(--line2);padding-top:12px;min-width:104px}
+  .stat b{display:block;font-family:var(--mono);font-size:21px;font-weight:600;font-variant-numeric:tabular-nums}
+  .stat span{font-size:11.5px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+  .cue{position:absolute;bottom:34px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:9px;color:var(--dim);font-family:var(--mono);font-size:10.5px;letter-spacing:.3em}
+  .cue i{width:1px;height:44px;background:linear-gradient(var(--ice),transparent);display:block;animation:drop 2.2s var(--ease) infinite}
+  @keyframes drop{0%{transform:scaleY(0);transform-origin:top}45%{transform:scaleY(1);transform-origin:top}55%{transform:scaleY(1);transform-origin:bottom}100%{transform:scaleY(0);transform-origin:bottom}}
+
+  /* split sections */
+  .split{display:grid;grid-template-columns:7fr 5fr;gap:clamp(32px,6vw,96px);align-items:center;width:100%}
+  .split.flip{grid-template-columns:5fr 7fr}
+  .split .copy .kicker{display:block;margin-bottom:18px}
+  .split .copy h2{margin-bottom:20px}
+  @media (max-width:860px){
+    .split,.split.flip{grid-template-columns:1fr;gap:44px}
+    section{padding:96px 0}
+  }
+
+  /* reveals */
+  .rv{opacity:0;transform:translateY(30px);transition:opacity .8s var(--ease),transform .8s var(--ease);transition-delay:var(--d,0s)}
+  .rv.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}.cue i{animation:none}}
+  .no-anim .rv{transition:none!important;opacity:1!important;transform:none!important}
+
+  /* ---- product mocks ---- */
+  .mock{background:linear-gradient(160deg,rgba(20,30,46,.82),rgba(13,20,32,.82));border:1px solid var(--line2);border-radius:24px;
+    padding:24px;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    box-shadow:0 40px 90px -30px rgba(4,10,20,.85),inset 0 1px 0 rgba(232,238,246,.07)}
+  .mock .mk{font-family:var(--mono);font-size:10px;letter-spacing:.26em;color:var(--ice);text-transform:uppercase;display:flex;align-items:center;gap:8px}
+  .mock .mk::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ice);box-shadow:0 0 8px rgba(143,184,232,.6)}
+  .nowmock{display:flex;justify-content:space-between;gap:18px;align-items:center}
+  .nowmock h3{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-top:10px}
+  .nowmock p{font-size:13px;color:var(--muted);margin-top:6px}
+  .nowmock .next{font-size:12.5px;color:var(--dim);margin-top:14px}
+  .nowmock .next b{color:var(--text);font-weight:600}
+  .ring{position:relative;width:104px;height:104px;flex:0 0 auto}
+  .ring svg{transform:rotate(-90deg)}
+  .ring .rt{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+  .ring .rt b{font-family:var(--mono);font-size:22px;font-weight:600}
+  .ring .rt span{font-size:8.5px;letter-spacing:.18em;color:var(--dim)}
+
+  .habitmock{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .hb{border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;justify-content:space-between;align-items:flex-start;background:rgba(10,16,25,.5)}
+  .hb .hn{font-size:13.5px;font-weight:600;margin-top:14px}
+  .hb .hd{font-size:11px;color:var(--dim);margin-top:3px}
+  .hb .ck{width:19px;height:19px;border-radius:7px;border:2px solid var(--line2)}
+  .hb.done .ck{background:var(--ice);border-color:var(--ice)}
+  .hb.done{border-color:rgba(143,184,232,.28)}
+  .hb svg{width:20px;height:20px;stroke:var(--ice);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .streakchip{margin-top:12px;display:inline-flex;align-items:center;gap:10px;border:1px solid rgba(143,184,232,.22);border-radius:99px;padding:9px 16px;background:rgba(13,20,32,.55)}
+  .streakchip svg{width:15px;height:15px;fill:var(--ice)}
+  .streakchip b{font-family:var(--mono);font-size:15px}
+  .streakchip span{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+
+  .statmock{display:grid;grid-template-columns:2fr 1fr;gap:22px;align-items:end}
+  .heat{display:grid;grid-template-columns:repeat(10,1fr);gap:5px}
+  .heat i{aspect-ratio:1;border-radius:4px;background:var(--c,rgba(151,180,214,.08))}
+  .recs{display:flex;flex-direction:column;gap:16px}
+  .rec{border-top:1px solid var(--line2);padding-top:10px}
+  .rec b{font-family:var(--mono);font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;display:block}
+  .rec span{font-size:10.5px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase}
+  @media (max-width:520px){.statmock{grid-template-columns:1fr;align-items:start}}
+
+  .devices{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+  .dev{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:12px;padding:10px 15px;font-size:13px;color:var(--muted);background:rgba(13,20,32,.5)}
+  .dev svg{width:15px;height:15px;stroke:var(--ice);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+  /* feature ticks */
+  .ticks{margin-top:26px;display:flex;flex-direction:column;gap:13px}
+  .tick{display:flex;gap:13px;align-items:flex-start;font-size:14.5px;color:var(--muted);line-height:1.5}
+  .tick b{color:var(--text);font-weight:600}
+  .tick svg{width:17px;height:17px;flex:0 0 auto;margin-top:2px;stroke:var(--ice);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+  /* CTA */
+  #cta{text-align:left}
+  #cta .wrap{display:grid;grid-template-columns:1.4fr 1fr;gap:clamp(32px,6vw,80px);align-items:center}
+  @media (max-width:860px){#cta .wrap{grid-template-columns:1fr}}
+  .bigcta{display:inline-flex;align-items:center;gap:12px;margin-top:34px;background:var(--ice);color:#0A1524;text-decoration:none;
+    font-weight:700;font-size:16px;padding:17px 34px;border-radius:16px;letter-spacing:-.01em;
+    box-shadow:0 24px 60px -18px rgba(78,127,181,.55);transition:transform .18s var(--ease),box-shadow .3s}
+  .bigcta:hover{transform:translateY(-2px)}
+  .bigcta:active{transform:scale(.98)}
+  .bigcta svg{width:17px;height:17px;stroke:#0A1524;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .ctameta{margin-top:22px;font-family:var(--mono);font-size:11.5px;color:var(--dim);letter-spacing:.06em}
+  footer{position:relative;z-index:10;padding:34px clamp(20px,4vw,56px);display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    border-top:1px solid var(--line);font-size:12px;color:var(--dim)}
+  footer a{color:var(--muted);text-decoration:none}
+  .tech{font-family:var(--mono);letter-spacing:.04em}
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<canvas id="gl"></canvas>
+<canvas id="snow"></canvas>
+<div id="grain"></div>
+<div id="progress"><i id="pbar"></i></div>
+
+<header>
+  <a class="brand" href="#">
+    <svg viewBox="0 0 24 24"><path d="M2 20 9.5 5l4 7.5L16 9l6 11Z" fill="#8FB8E8"/><path d="m9.5 5 2.2 4.2L13.5 12l-4-7Z" fill="#EAF2FB" opacity=".85"/></svg>
+    <b>GLACIER</b>
+  </a>
+  <a class="openapp" href="https://glacier-tawny.vercel.app" target="_blank" rel="noopener">Open the app</a>
+</header>
+
+<main>
+  <section id="hero">
+    <div class="wrap"><div class="stack">
+      <div class="kicker rv">A daily system, carved in ice</div>
+      <h1 class="rv" style="--d:.08s">Build<br>the <span>day.</span></h1>
+      <p class="lede sub rv" style="--d:.16s">Schedule, habits, streaks, and stats in <b>one fast file</b>. No feeds, no noise — just the next right thing, and the proof that you did it.</p>
+      <div class="statrow rv" style="--d:.24s">
+        <div class="stat"><b>1</b><span>HTML file</span></div>
+        <div class="stat"><b>0</b><span>frameworks</span></div>
+        <div class="stat"><b>&lt;150 KB</b><span>total</span></div>
+        <div class="stat"><b>∞</b><span>days to build</span></div>
+      </div>
+    </div></div>
+    <div class="cue">SCROLL<i></i></div>
+  </section>
+
+  <section>
+    <div class="wrap"><div class="split">
+      <div class="copy">
+        <span class="kicker rv">Right now</span>
+        <h2 class="rv" style="--d:.06s">The day runs itself. You just show up.</h2>
+        <p class="lede rv" style="--d:.12s">A live engine tracks your timeline in real time — what you're doing, what's next, and exactly how long you have. Tasks carry a time, a note, a priority, and an optional push reminder.</p>
+        <div class="ticks rv" style="--d:.18s">
+          <div class="tick"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>Live countdown</b> to your next block, updated every 15 seconds</span></div>
+          <div class="tick"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>Fully editable timeline</b> — build your own day, block by block</span></div>
+          <div class="tick"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>Fuel tracking</b> — protein and calories against your daily targets</span></div>
+        </div>
+      </div>
+      <div class="mock rv" style="--d:.2s">
+        <div class="mk">Right now</div>
+        <div class="nowmock">
+          <div>
+            <h3>Deep work — block two</h3>
+            <p>Hardest thing while you're fresh.</p>
+            <div class="next">Next — <b>Move · 20 min</b> · 11:05 AM</div>
+          </div>
+          <div class="ring">
+            <svg width="104" height="104" viewBox="0 0 104 104">
+              <circle cx="52" cy="52" r="45" stroke="rgba(151,180,214,.12)" stroke-width="6" fill="none"/>
+              <circle id="ringArc" cx="52" cy="52" r="45" stroke="#8FB8E8" stroke-width="6" fill="none" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="90"/>
+            </svg>
+            <div class="rt"><div><b>1h 12</b><br><span>LEFT</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <section>
+    <div class="wrap"><div class="split flip">
+      <div class="mock rv" style="--d:.2s">
+        <div class="mk" style="margin-bottom:14px">Habits</div>
+        <div class="habitmock">
+          <div class="hb done"><div><svg viewBox="0 0 24 24"><path d="M12 2v6m0 0a4.5 4.5 0 1 0 4.5 4.5"/><path d="M12 8a4.5 4.5 0 1 1-4.5 4.5"/></svg><div class="hn">Morning water</div><div class="hd">First thing</div></div><div class="ck"></div></div>
+          <div class="hb done"><div><svg viewBox="0 0 24 24"><path d="M4 19h16M6 19V9l6-5 6 5v10"/></svg><div class="hn">Trained</div><div class="hd">Any movement</div></div><div class="ck"></div></div>
+          <div class="hb"><div><svg viewBox="0 0 24 24"><path d="M4 12h16M12 4v16"/></svg><div class="hn">Created</div><div class="hd">Ship something</div></div><div class="ck"></div></div>
+          <div class="hb done"><div><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 8v4l3 2"/></svg><div class="hn">Wound down</div><div class="hd">Screens off</div></div><div class="ck"></div></div>
+        </div>
+        <div class="streakchip"><svg viewBox="0 0 24 24"><path d="M12 2c1 4-3 5-3 9a3 3 0 0 0 6 .5C16.5 9 13 7 12 2Zm0 20a6 6 0 0 1-6-6c0-2 1-3.8 2-5a4.5 4.5 0 0 0 9 .6A6 6 0 0 1 12 22Z"/></svg><b>34</b><span>day streak</span></div>
+      </div>
+      <div class="copy">
+        <span class="kicker rv">Habits &amp; streaks</span>
+        <h2 class="rv" style="--d:.06s">Every check is a vote for who you're becoming.</h2>
+        <p class="lede rv" style="--d:.12s">Design your own habit groups — your icons, your names, your rules. Clean streaks count the days you held the line, and holding it gets addictive.</p>
+        <div class="ticks rv" style="--d:.18s">
+          <div class="tick"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>Everything is editable</b> — groups, habits, icons, descriptions</span></div>
+          <div class="tick"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg><span><b>Tap to check, hold to reset</b> — friction exactly where it belongs</span></div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <section>
+    <div class="wrap"><div class="split">
+      <div class="copy">
+        <span class="kicker rv">Stats</span>
+        <h2 class="rv" style="--d:.06s">Proof you showed up, thirty days deep.</h2>
+        <p class="lede rv" style="--d:.12s">A score ring for today, a heatmap for the month, and all-time records that only move one direction. Habits earn XP; XP earns levels — from <b>Rookie</b> to <b>GOAT</b>.</p>
+      </div>
+      <div class="mock rv" style="--d:.2s">
+        <div class="mk" style="margin-bottom:16px">Last 30 days</div>
+        <div class="statmock">
+          <div class="heat" id="heat"></div>
+          <div class="recs">
+            <div class="rec"><b>34</b><span>Best streak</span></div>
+            <div class="rec"><b>7,240</b><span>XP earned</span></div>
+            <div class="rec"><b>LV 9</b><span>Beast</span></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <section>
+    <div class="wrap"><div class="split flip">
+      <div class="copy" style="grid-column:1/-1;max-width:720px">
+        <span class="kicker rv">Everywhere</span>
+        <h2 class="rv" style="--d:.06s">Local-first. Cloud-synced. Reminders that follow <em style="font-style:normal;color:var(--ice)">your</em> schedule.</h2>
+        <p class="lede rv" style="--d:.12s">Works offline from the first tap — an account is optional. Sign in and every device stays in step, with branded push notifications timed to your own timeline, in your own timezone.</p>
+        <div class="devices rv" style="--d:.18s">
+          <div class="dev"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>iPhone · home screen</div>
+          <div class="dev"><svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20h8"/></svg>Desktop · any browser</div>
+          <div class="dev"><svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><circle cx="12" cy="18" r="1"/></svg>Android · anywhere</div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <section id="cta">
+    <div class="wrap">
+      <div>
+        <span class="kicker rv">Free · open source · yours</span>
+        <h2 class="rv" style="--d:.06s">Start your climb.</h2>
+        <p class="lede rv" style="--d:.12s">One link. No install, no signup required. The mountain doesn't care how you feel about it — it only counts the steps.</p>
+        <a class="bigcta rv" style="--d:.18s" href="https://glacier-tawny.vercel.app" target="_blank" rel="noopener">Open GLACIER<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <div class="ctameta rv" style="--d:.24s">glacier-tawny.vercel.app</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div>GLACIER — build the day.</div>
+  <div class="tech">GAUSSIAN SPLATS · WEBGL2 · WASM SORT · LAYERED CANVAS · SCROLL-DRIVEN 3D</div>
+  <div><a href="https://github.com/taviothrower-og/glacier" target="_blank" rel="noopener">Source on GitHub</a></div>
+</footer>
+
+<script>
+(function(){
+'use strict';
+var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+var mobile = matchMedia('(max-width:768px), (pointer:coarse)').matches;
+var lite = /lite/.test(location.search+location.hash);
+(function(){ try{
+  var tc=document.createElement('canvas'), tg=tc.getContext('webgl2');
+  if(tg){ var dbg=tg.getExtension('WEBGL_debug_renderer_info');
+    var rn=String(dbg?tg.getParameter(dbg.UNMASKED_RENDERER_WEBGL):tg.getParameter(tg.RENDERER));
+    if(/swiftshader|llvmpipe|software|basic render/i.test(rn)) lite=true; }
+}catch(e){} })();
+var DPR = Math.min(devicePixelRatio||1, lite?1:1.5);
+var glDPR = lite?0.75:DPR;
+
+/* ================= seeded rng + noise ================= */
+var seed = 1337;
+function rnd(){ seed = (seed*1664525 + 1013904223) >>> 0; return seed/4294967296; }
+function hash2(x,y){ var h = (x*374761393 + y*668265263) ^ 0x5bf03635; h = (h ^ (h>>>13)) >>> 0; h = (h*1274126177)>>>0; return ((h ^ (h>>>16))>>>0)/4294967296; }
+function vnoise(x,y){
+  var xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
+  var u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
+  var a=hash2(xi,yi), b=hash2(xi+1,yi), c=hash2(xi,yi+1), d=hash2(xi+1,yi+1);
+  return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v;
+}
+function fbm(x,y){ var s=0,a=.5,f=1; for(var i=0;i<5;i++){ s+=a*vnoise(x*f,y*f); f*=2.03; a*=.5; } return s; }
+function ridge(x,y){ var n=fbm(x,y); return 1-Math.abs(2*n-1); }
+
+/* ================= glacier heightfield ================= */
+var EXT=150;
+function height(x,z){
+  var d=Math.sqrt(x*x+z*z);
+  var massif=Math.exp(-(d*d)/(2*88*88));                       // main peak mask
+  var shoulder=.55*Math.exp(-(((x+72)*(x+72))+((z-42)*(z-42)))/(2*46*46))
+             + .42*Math.exp(-(((x-84)*(x-84))+((z+30)*(z+30)))/(2*40*40));
+  var r=ridge(x*.014+7.3, z*.014-2.1);
+  var det=fbm(x*.06+3, z*.06+9)*.22;
+  var h=(Math.pow(r,1.6)*.85+det)*(massif*105+shoulder*58);
+  return h;
+}
+function normalAt(x,z){
+  var e=1.6, hx=height(x+e,z)-height(x-e,z), hz=height(x,z+e)-height(x,z-e);
+  var nx=-hx/(2*e), nz=-hz/(2*e), ny=1, l=Math.sqrt(nx*nx+ny*ny+nz*nz);
+  return [nx/l, ny/l, nz/l];
+}
+
+/* ================= build splats ================= */
+var N = lite ? 7000 : (mobile ? 20000 : 42000);
+var FOGN = lite ? 70 : (mobile ? 140 : 220), SPARKN = lite ? 400 : (mobile ? 700 : 1500);
+var TOTAL = N + FOGN + SPARKN;
+// interleaved f32: pos3, size2, rot1, rgba4  (10 floats)
+var STRIDE=10;
+var src = new Float32Array(TOTAL*STRIDE);
+var pmax=0;
+(function build(){
+  var i, o=0;
+  var Lx=-0.48,Ly=0.72,Lz=-0.5;
+  function put(x,y,z, sx,sy, rot, r,g,b,a){
+    src[o]=x; src[o+1]=y; src[o+2]=z; src[o+3]=sx; src[o+4]=sy; src[o+5]=rot;
+    src[o+6]=r; src[o+7]=g; src[o+8]=b; src[o+9]=a; o+=STRIDE;
+    if(y>pmax) pmax=y;
+  }
+  // glacier flow channel: meandering line down the +z face
+  function chanDist(x,z){ var cx=Math.sin(z*.045)*22 + Math.sin(z*.013+2)*10; return Math.abs(x-cx); }
+  for(i=0;i<N;i++){
+    var ang=rnd()*Math.PI*2, rad=Math.sqrt(rnd())*EXT;
+    var x=Math.cos(ang)*rad, z=Math.sin(ang)*rad;
+    var y=height(x,z);
+    var nrm=normalAt(x,z), slope=1-nrm[1];
+    var altN=y/ (pmax||105);
+    var snowline = 34 + fbm(x*.05,z*.05)*18;
+    var r,g,b,a, s;
+    var isChan = z>4 && chanDist(x,z)<9+fbm(z*.08,1)*5 && y<snowline+22 && y>3;
+    if(isChan){                                   // glacier ice tongue
+      var t=.55+rnd()*.4;
+      r=.36*t+.20; g=.55*t+.24; b=.82*t+.28; a=.85;
+      s=1.6+rnd()*2.6;
+    } else if((y>snowline && slope<.62) || (y>snowline*1.6)){  // snow (summit always holds)
+      var w=.86+rnd()*.14, tint=.94+fbm(x*.2,z*.2)*.08;
+      r=w*.90*tint; g=w*.95*tint; b=w*1.0*tint; a=.92;
+      s=1.5+rnd()*2.8;
+    } else {                                      // rock
+      var k=.10+rnd()*.10 + slope*.05;
+      r=k*.85; g=k*1.0; b=k*1.28; a=.95;
+      s=1.8+rnd()*3.4;
+    }
+    // baked moonlight from upper-left + sink slightly + elongate along slope
+    var lit=.42+.58*Math.max(0, nrm[0]*Lx+nrm[1]*Ly+nrm[2]*Lz);
+    put(x, y-.6-rnd()*1.2, z, s*(1+slope*.9), s*(1-slope*.35), Math.atan2(nrm[0],nrm[2]), r*lit,g*lit,b*lit,a);
+  }
+  for(i=0;i<SPARKN;i++){                          // snow sparkle
+    var ang2=rnd()*Math.PI*2, rad2=Math.sqrt(rnd())*70;
+    var x2=Math.cos(ang2)*rad2, z2=Math.sin(ang2)*rad2, y2=height(x2,z2);
+    if(y2<30){ i--; continue; }
+    put(x2, y2+.4, z2, .28+rnd()*.5, .28+rnd()*.5, rnd()*6.28, 1,1,1,.95);
+  }
+  for(i=0;i<FOGN;i++){                            // valley fog
+    var ang3=rnd()*Math.PI*2, rad3=60+Math.sqrt(rnd())*130;
+    var x3=Math.cos(ang3)*rad3, z3=Math.sin(ang3)*rad3;
+    var y3=Math.max(height(x3,z3),0)+2+rnd()*7;
+    var f=.5+rnd()*.5;
+    put(x3, y3, z3, 14+rnd()*20, 5+rnd()*7, rnd()*6.28, .07*f,.10*f,.16*f, .028+rnd()*.03);
+  }
+})();
+
+/* ================= WASM depth sort (hand-assembled, 381 bytes) ================= */
+var WASM_B64='AGFzbQEAAAABCgFgBn99fX19fQADAgEABQMBAHAHDgIEc29ydAAAA21lbQIACs0CAcoCAwJ/AX0Df0EAIQYCQANAIAZBgIAETg0BQYCAgAIgBkECdGpBADYCACAGQQFqIQYMAAsLQQAhBgJAA0AgBiAATg0BIAZBDGwhByAHKgIAIAGUIAcqAgQgApSSIAcqAgggA5SSIQggCCAEkyAFlEMAAAAAl0MA/39HlqghCUGAgMABIAZBAnRqIAk2AgBBgICAAiAJQQJ0aiILIAsoAgBBAWo2AgAgBkEBaiEGDAALC0EAIQpB//8DIQYCQANAIAZBAEgNAUGAgIACIAZBAnRqIQcgBygCACELIAcgCjYCACAKIAtqIQogBkEBayEGDAALC0EAIQYCQANAIAYgAE4NAUGAgMABIAZBAnRqKAIAIQlBgICAAiAJQQJ0aiEHIAcoAgAhC0GAgMACIAtBAnRqIAY2AgAgByALQQFqNgIAIAZBAWohBgwACwsL';
+var wasmSort=null, wasmMem=null, wasmPos=null, wasmOut=null;
+try{
+  var raw=atob(WASM_B64), bytes=new Uint8Array(raw.length);
+  for(var bi=0;bi<raw.length;bi++) bytes[bi]=raw.charCodeAt(bi);
+  var wmod=new WebAssembly.Module(bytes.buffer);
+  var winst=new WebAssembly.Instance(wmod);
+  wasmSort=winst.exports.sort; wasmMem=winst.exports.mem;
+  wasmPos=new Float32Array(wasmMem.buffer,0,TOTAL*3);
+  wasmOut=new Uint32Array(wasmMem.buffer,0x500000,TOTAL);
+  for(var si=0;si<TOTAL;si++){ wasmPos[si*3]=src[si*STRIDE]; wasmPos[si*3+1]=src[si*STRIDE+1]; wasmPos[si*3+2]=src[si*STRIDE+2]; }
+}catch(e){ console.warn('WASM unavailable, falling back to JS sort', e); }
+var jsIdx=null;
+function depthSort(vx,vy,vz){
+  // bbox depth range
+  var mn=1e9,mx=-1e9,c=[[-EXT,0,-EXT],[EXT,0,-EXT],[-EXT,0,EXT],[EXT,0,EXT],[0,pmax+8,0],[0,pmax+8,60]];
+  for(var i=0;i<c.length;i++){ var d=c[i][0]*vx+c[i][1]*vy+c[i][2]*vz; if(d<mn)mn=d; if(d>mx)mx=d; }
+  var inv=65535/((mx-mn)||1);
+  if(wasmSort){ wasmSort(LIVE,vx,vy,vz,mn,inv); return wasmOut; }
+  if(!jsIdx||jsIdx.length!==LIVE){ jsIdx=new Uint32Array(LIVE); }
+  var keys=new Float32Array(LIVE);
+  for(var j=0;j<LIVE;j++){ jsIdx[j]=j; keys[j]=src[j*STRIDE]*vx+src[j*STRIDE+1]*vy+src[j*STRIDE+2]*vz; }
+  Array.prototype.sort.call(jsIdx,function(a,b){return keys[b]-keys[a]});
+  return jsIdx;
+}
+
+/* ================= WebGL2 splat renderer ================= */
+var glc=document.getElementById('gl');
+var gl=glc.getContext('webgl2',{alpha:true,antialias:false,depth:false,premultipliedAlpha:true});
+var draw=new Float32Array(TOTAL*STRIDE);
+var prog=null, vao=null, instBuf=null, uV,uP,uFogD,uFogC;
+if(gl){
+  function sh(type,srcc){ var s=gl.createShader(type); gl.shaderSource(s,srcc); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; }
+  var vs=sh(gl.VERTEX_SHADER,`#version 300 es
+    layout(location=0) in vec2 q;
+    layout(location=1) in vec3 ip;
+    layout(location=2) in vec2 isz;
+    layout(location=3) in float irot;
+    layout(location=4) in vec4 icol;
+    uniform mat4 uV,uP; uniform float uFogD;
+    out vec2 vq; out vec4 vcol; out float vfog;
+    void main(){
+      vec4 c=uV*vec4(ip,1.0);
+      float pz=max(-c.z,0.001);
+      // cap projected size so near splats can never flood fill-rate
+      float hsz=max(isz.x,isz.y)*uP[1][1]/pz;
+      float shrink=min(1.0, 0.4/max(hsz,1e-5));
+      vec2 sz=isz*shrink;
+      float cr=cos(irot),sr=sin(irot);
+      vec2 o=vec2(q.x*cr-q.y*sr, q.x*sr+q.y*cr)*sz;
+      c.xy+=o;
+      gl_Position=uP*c;
+      vq=q; vcol=icol;
+      vcol.a*=smoothstep(2.0,7.0,pz);   // fade splats the camera flies through
+      float df=clamp(1.0-exp(uFogD*c.z),0.0,1.0);
+      float hf=exp(-max(ip.y,0.0)*0.055)*0.6;
+      vfog=clamp(df+hf,0.0,1.0);
+    }`);
+  var fs=sh(gl.FRAGMENT_SHADER,`#version 300 es
+    precision mediump float;
+    in vec2 vq; in vec4 vcol; in float vfog;
+    uniform vec3 uFogC;
+    out vec4 o;
+    void main(){
+      float r2=dot(vq,vq);
+      if(r2>1.0) discard;
+      float a=exp(-4.2*r2)*vcol.a;
+      vec3 col=mix(vcol.rgb,uFogC,vfog);
+      o=vec4(col*a,a);
+    }`);
+  prog=gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(prog));
+  uV=gl.getUniformLocation(prog,'uV'); uP=gl.getUniformLocation(prog,'uP');
+  uFogD=gl.getUniformLocation(prog,'uFogD'); uFogC=gl.getUniformLocation(prog,'uFogC');
+  vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  var quad=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,quad);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, -1,1, 1,1]),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+  instBuf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,instBuf);
+  gl.bufferData(gl.ARRAY_BUFFER,draw.byteLength,gl.DYNAMIC_DRAW);
+  var offs=[[1,3,0],[2,2,12],[3,1,20],[4,4,24]];
+  offs.forEach(function(d){ gl.enableVertexAttribArray(d[0]); gl.vertexAttribPointer(d[0],d[1],gl.FLOAT,false,STRIDE*4,d[2]); gl.vertexAttribDivisor(d[0],1); });
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+  gl.clearColor(0,0,0,0);
+} else { glc.style.display='none'; }
+
+/* ================= mat4 helpers ================= */
+function lookAt(ex,ey,ez, cx,cy,cz){
+  var zx=ex-cx,zy=ey-cy,zz=ez-cz, zl=Math.hypot(zx,zy,zz); zx/=zl;zy/=zl;zz/=zl;
+  var xx=zz*0-1*zy? 0:0; // placeholder
+  var upx=0,upy=1,upz=0;
+  var xx2=upy*zz-upz*zy, xy2=upz*zx-upx*zz, xz2=upx*zy-upy*zx, xl=Math.hypot(xx2,xy2,xz2); xx2/=xl;xy2/=xl;xz2/=xl;
+  var yx=zy*xz2-zz*xy2, yy=zz*xx2-zx*xz2, yz=zx*xy2-zy*xx2;
+  return new Float32Array([xx2,yx,zx,0, xy2,yy,zy,0, xz2,yz,zz,0,
+    -(xx2*ex+xy2*ey+xz2*ez), -(yx*ex+yy*ey+yz*ez), -(zx*ex+zy*ey+zz*ez), 1]);
+}
+function persp(fov,asp,n,f){
+  var t=1/Math.tan(fov/2);
+  return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]);
+}
+
+/* ================= camera path (scroll-driven) ================= */
+var KF=[ // p, theta(π), radius, height, lookY, fog
+  [0.00,-0.32,305,112,52,.0085],
+  [0.20, 0.10,220, 76,48,.010 ],
+  [0.42, 0.58,152, 50,44,.014 ],
+  [0.64, 1.06,120, 38,58,.016 ],
+  [0.84, 1.55,170, 62,50,.012 ],
+  [1.00, 1.96,265,102,54,.008 ]
+];
+function ss(t){ return t*t*(3-2*t); }
+function camAt(p){
+  var i=0; while(i<KF.length-2 && p>KF[i+1][0]) i++;
+  var a=KF[i], b=KF[i+1], t=ss(Math.min(1,Math.max(0,(p-a[0])/(b[0]-a[0]))));
+  function L(j){ return a[j]+(b[j]-a[j])*t; }
+  var th=L(1)*Math.PI, r=L(2), h=L(3), ly=L(4), fog=L(5);
+  return { ex:Math.cos(th)*r, ey:h, ez:Math.sin(th)*r, ly:ly, fog:fog };
+}
+
+/* ================= sky (canvas 2D, layer 0) ================= */
+var sky=document.getElementById('sky'), sctx=sky.getContext('2d');
+var stars=[];
+for(var st=0;st<420;st++) stars.push([rnd(),rnd()*.72,rnd()*1.3+.3,rnd()*6.28]);
+function drawSky(t){
+  var w=sky.width,h=sky.height;
+  var g=sctx.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,'#04060B'); g.addColorStop(.55,'#0A1220'); g.addColorStop(.85,'#12233A'); g.addColorStop(1,'#16293F');
+  sctx.fillStyle=g; sctx.fillRect(0,0,w,h);
+  // aurora ribbons
+  for(var rb=0;rb<3;rb++){
+    var yb=h*(.16+rb*.09), amp=h*.045*(1+rb*.35), ph=t*.00006*(rb+1)+rb*2.1;
+    var grad=sctx.createLinearGradient(0,yb-amp*2,0,yb+amp*2);
+    var cA=rb===1?'rgba(120,205,190,':'rgba(126,168,224,';
+    grad.addColorStop(0,cA+'0)'); grad.addColorStop(.5,cA+(0.065-rb*.012)+')'); grad.addColorStop(1,cA+'0)');
+    sctx.fillStyle=grad;
+    sctx.beginPath(); sctx.moveTo(0,yb);
+    for(var x=0;x<=w;x+=w/48){ sctx.lineTo(x, yb+Math.sin(x*.004+ph)*amp+Math.sin(x*.0013-ph*1.7)*amp*.7); }
+    sctx.lineTo(w,yb+amp*3); sctx.lineTo(0,yb+amp*3); sctx.closePath(); sctx.fill();
+  }
+  // stars
+  sctx.fillStyle='#DCE8F8';
+  for(var si2=0;si2<stars.length;si2++){
+    var s2=stars[si2], tw=.4+.6*Math.abs(Math.sin(t*.001+s2[3]));
+    sctx.globalAlpha=tw*.8;
+    sctx.fillRect(s2[0]*w, s2[1]*h, s2[2], s2[2]);
+  }
+  sctx.globalAlpha=1;
+}
+
+/* ================= snow (canvas 2D, layer 2) ================= */
+var snowC=document.getElementById('snow'), nctx=snowC.getContext('2d');
+var FLAKES = reduced?0 : (mobile?90:230);
+var flakes=[];
+for(var fl=0;fl<FLAKES;fl++) flakes.push({x:rnd(),y:rnd(),z:.3+rnd()*.7,ph:rnd()*6.28});
+var scrollVel=0;
+function drawSnow(t,dt){
+  var w=snowC.width,h=snowC.height;
+  nctx.clearRect(0,0,w,h);
+  nctx.fillStyle='#EAF2FB';
+  for(var i=0;i<flakes.length;i++){
+    var f=flakes[i];
+    f.y+=(.018+f.z*.05)*dt*.06;
+    f.x+=(Math.sin(t*.0004+f.ph)*.012 - scrollVel*f.z*.00001)*dt*.06;
+    if(f.y>1.02){f.y=-.02; f.x=rnd();}
+    if(f.x>1.02)f.x=-.02; if(f.x<-.02)f.x=1.02;
+    nctx.globalAlpha=.25+f.z*.5;
+    var r=f.z*2.1*DPR;
+    nctx.beginPath(); nctx.arc(f.x*w,f.y*h,r,0,6.28); nctx.fill();
+  }
+  nctx.globalAlpha=1;
+}
+
+/* ================= resize ================= */
+function resize(){
+  var w=innerWidth,h=innerHeight;
+  sky.width=Math.round(w*DPR*.5); sky.height=Math.round(h*DPR*.5);
+  sky.style.width=w+'px'; sky.style.height=h+'px';
+  glc.width=Math.round(w*glDPR); glc.height=Math.round(h*glDPR); glc.style.width=w+'px'; glc.style.height=h+'px';
+  snowC.width=w*DPR; snowC.height=h*DPR; snowC.style.width=w+'px'; snowC.style.height=h+'px';
+  if(gl) gl.viewport(0,0,glc.width,glc.height);
+  drawSky(perf());
+}
+function perf(){ return performance.now(); }
+addEventListener('resize',resize);
+
+/* ================= main loop ================= */
+var scrollS=0, lastSortDir=null, lastT=perf(), lastScroll=0, lastSortT=-1e9;
+var pbar=document.getElementById('pbar');
+var running=true;
+var LIVE=TOTAL, frameAcc=0, frameCnt=0, degradeSteps=0;
+function decimate(){
+  // drop every other splat from the live set (keep array prefix compact)
+  var keep=0;
+  for(var i=0;i<LIVE;i++){
+    if(i%2===0){
+      if(keep!==i){
+        for(var k=0;k<STRIDE;k++) src[keep*STRIDE+k]=src[i*STRIDE+k];
+        if(wasmPos){ wasmPos[keep*3]=src[keep*STRIDE]; wasmPos[keep*3+1]=src[keep*STRIDE+1]; wasmPos[keep*3+2]=src[keep*STRIDE+2]; }
+      }
+      keep++;
+    }
+  }
+  if(wasmPos) for(var j=0;j<keep;j++){ wasmPos[j*3]=src[j*STRIDE]; wasmPos[j*3+1]=src[j*STRIDE+1]; wasmPos[j*3+2]=src[j*STRIDE+2]; }
+  LIVE=keep; lastSortDir=null; degradeSteps++;
+}
+document.addEventListener('visibilitychange',function(){ running=!document.hidden; if(running) requestAnimationFrame(tick); });
+function tick(t,force){
+  if(!running&&!force) return;
+  var dt=Math.min(250,t-lastT); lastT=t;
+  frameAcc+=dt; frameCnt++;
+  if(frameCnt===12){
+    var avg=frameAcc/12;
+    if(avg>45 && LIVE>2500 && degradeSteps<5){
+      decimate();
+      if(avg>120 && LIVE>2500) decimate();
+      if(degradeSteps>=2 && glDPR>0.55){ glDPR*=0.6; resize(); }
+    }
+    frameAcc=0; frameCnt=0;
+  }
+  var doc=document.documentElement;
+  var target=(scrollY||doc.scrollTop)/((doc.scrollHeight-innerHeight)||1);
+  scrollVel=(scrollY-lastScroll); lastScroll=scrollY;
+  scrollS += (target-scrollS)*(reduced?1:.065);
+  pbar.style.width=(target*100)+'%';
+
+  drawSky(t);
+  if(FLAKES) drawSnow(t,dt);
+
+  if(gl){
+    var cam=camAt(reduced?.1:scrollS);
+    var V=lookAt(cam.ex,cam.ey,cam.ez, 0,cam.ly,0);
+    var P=persp(50*Math.PI/180, glc.width/glc.height, 1, 1400);
+    // view dir (from eye toward center)
+    var dx=0-cam.ex, dy=cam.ly-cam.ey, dz=0-cam.ez, dl=Math.hypot(dx,dy,dz);
+    dx/=dl;dy/=dl;dz/=dl;
+    var need=!lastSortDir || ((t-lastSortT)>180 && (dx*lastSortDir[0]+dy*lastSortDir[1]+dz*lastSortDir[2])<0.9997);
+    if(need){
+      lastSortT=t;
+      var order=depthSort(dx,dy,dz);
+      for(var i=0;i<LIVE;i++){
+        var s=order[i]*STRIDE, d2=i*STRIDE;
+        for(var k=0;k<STRIDE;k++) draw[d2+k]=src[s+k];
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER,instBuf);
+      gl.bufferSubData(gl.ARRAY_BUFFER,0,draw);
+      lastSortDir=[dx,dy,dz];
+    }
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(prog);
+    gl.bindVertexArray(vao);
+    gl.uniformMatrix4fv(uV,false,V);
+    gl.uniformMatrix4fv(uP,false,P);
+    gl.uniform1f(uFogD,cam.fog*0.14);
+    gl.uniform3f(uFogC,.082,.148,.226);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,LIVE);
+  }
+  requestAnimationFrame(tick);
+}
+resize();
+requestAnimationFrame(tick);
+// Hidden/prerendered pages get no rAF: render on demand so the page is always
+// correct the moment it becomes visible (or is screenshotted).
+if(document.hidden) document.documentElement.classList.add('no-anim');
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden){
+    running=true;
+    scrollS=(scrollY||document.documentElement.scrollTop)/((document.documentElement.scrollHeight-innerHeight)||1);
+    lastSortDir=null; tick(perf(),true);
+    setTimeout(function(){ document.documentElement.classList.remove('no-anim'); },900);
+  }
+});
+addEventListener('scroll',function(){
+  if(document.hidden){
+    scrollS=(scrollY||document.documentElement.scrollTop)/((document.documentElement.scrollHeight-innerHeight)||1);
+    lastSortDir=null;
+    tick(perf(),true);
+  }
+},{passive:true});
+if(document.hidden){ scrollS=0; tick(perf(),true); }
+
+/* ================= reveals + ring ================= */
+var io=new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } }); },{threshold:.25});
+document.querySelectorAll('.rv').forEach(function(el){ io.observe(el); });
+// heatmap mock
+var heat=document.getElementById('heat');
+for(var hi=0;hi<30;hi++){
+  var lvl=rnd(); var cell=document.createElement('i');
+  if(lvl>.82) cell.style.setProperty('--c','rgba(143,184,232,.95)');
+  else if(lvl>.5) cell.style.setProperty('--c','rgba(143,184,232,.55)');
+  else if(lvl>.25) cell.style.setProperty('--c','rgba(143,184,232,.22)');
+  heat.appendChild(cell);
+}
+// idle ring sweep
+if(!reduced){ var ring=document.getElementById('ringArc'), r0=90;
+  setInterval(function(){ r0=r0<=20?200:r0-1; ring.setAttribute('stroke-dashoffset',r0); },90); }
+})();
+</script>
+</body>
+</html>

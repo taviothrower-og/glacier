@@ -24,8 +24,7 @@
   ::selection{background:rgba(143,184,232,.25)}
 
   /* ---- fixed render layers ---- */
-  #sky,#gl,#snow{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
-  #sky{z-index:0} #gl{z-index:1} #snow{z-index:2}
+  #gl{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
   #grain{position:fixed;inset:0;z-index:3;pointer-events:none;opacity:.05;mix-blend-mode:overlay;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")}
   #progress{position:fixed;top:0;left:0;right:0;height:2px;z-index:40;background:transparent}
@@ -151,9 +150,7 @@
 </style>
 </head>
 <body>
-<canvas id="sky"></canvas>
 <canvas id="gl"></canvas>
-<canvas id="snow"></canvas>
 <div id="grain"></div>
 <div id="progress"><i id="pbar"></i></div>
 
@@ -288,7 +285,7 @@
 
 <footer>
   <div>GLACIER — build the day.</div>
-  <div class="tech">GAUSSIAN SPLATS · WEBGL2 · WASM SORT · LAYERED CANVAS · SCROLL-DRIVEN 3D</div>
+  <div class="tech">RAYMARCHED TERRAIN · WEBGL2 · REAL-TIME DAWN · SCROLL-DRIVEN 3D</div>
   <div><a href="https://github.com/taviothrower-og/glacier" target="_blank" rel="noopener">Source on GitHub</a></div>
 </footer>
 
@@ -298,339 +295,232 @@
 var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 var mobile = matchMedia('(max-width:768px), (pointer:coarse)').matches;
 var lite = /lite/.test(location.search+location.hash);
-var forceP = (function(){ var m=(location.hash||'').match(/p=([0-9.]+)/); return m?Math.min(1,Math.max(0,parseFloat(m[1]))):null; })();
 (function(){ try{
   var tc=document.createElement('canvas'), tg=tc.getContext('webgl2');
   if(tg){ var dbg=tg.getExtension('WEBGL_debug_renderer_info');
     var rn=String(dbg?tg.getParameter(dbg.UNMASKED_RENDERER_WEBGL):tg.getParameter(tg.RENDERER));
     if(/swiftshader|llvmpipe|software|basic render/i.test(rn)) lite=true; }
 }catch(e){} })();
-var DPR = Math.min(devicePixelRatio||1, lite?1:1.5);
-var glDPR = lite?0.75:DPR;
+var forceP = (function(){ var m=(location.hash||'').match(/p=([0-9.]+)/); return m?Math.min(1,Math.max(0,parseFloat(m[1]))):null; })();
+var glDPR = lite?0.42:(mobile?0.7:Math.min(devicePixelRatio||1,1.25));
+var QUALITY = lite?0.45:(mobile?0.7:1.0); // scales march steps
 
-/* ================= seeded rng + noise ================= */
-var seed = 1337;
-function rnd(){ seed = (seed*1664525 + 1013904223) >>> 0; return seed/4294967296; }
-function hash2(x,y){ var h = (x*374761393 + y*668265263) ^ 0x5bf03635; h = (h ^ (h>>>13)) >>> 0; h = (h*1274126177)>>>0; return ((h ^ (h>>>16))>>>0)/4294967296; }
-function vnoise(x,y){
-  var xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
-  var u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf);
-  var a=hash2(xi,yi), b=hash2(xi+1,yi), c=hash2(xi,yi+1), d=hash2(xi+1,yi+1);
-  return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v;
-}
-function fbm(x,y){ var s=0,a=.5,f=1; for(var i=0;i<5;i++){ s+=a*vnoise(x*f,y*f); f*=2.03; a*=.5; } return s; }
-function ridge(x,y){ var n=fbm(x,y); return 1-Math.abs(2*n-1); }
-
-/* ================= glacier heightfield ================= */
-var EXT=150;
-function height(x,z){
-  var d=Math.sqrt(x*x+z*z);
-  var massif=Math.exp(-(d*d)/(2*88*88));                       // main peak mask
-  var shoulder=.55*Math.exp(-(((x+72)*(x+72))+((z-42)*(z-42)))/(2*46*46))
-             + .42*Math.exp(-(((x-84)*(x-84))+((z+30)*(z+30)))/(2*40*40));
-  var r=ridge(x*.014+7.3, z*.014-2.1);
-  var det=fbm(x*.06+3, z*.06+9)*.22;
-  var h=(Math.pow(r,1.6)*.85+det)*(massif*105+shoulder*58);
-  return h;
-}
-function normalAt(x,z){
-  var e=1.6, hx=height(x+e,z)-height(x-e,z), hz=height(x,z+e)-height(x,z-e);
-  var nx=-hx/(2*e), nz=-hz/(2*e), ny=1, l=Math.sqrt(nx*nx+ny*ny+nz*nz);
-  return [nx/l, ny/l, nz/l];
-}
-
-/* ================= build splats ================= */
-var N = lite ? 7000 : (mobile ? 20000 : 42000);
-var FOGN = lite ? 70 : (mobile ? 140 : 220), SPARKN = lite ? 400 : (mobile ? 700 : 1500);
-var TOTAL = N + FOGN + SPARKN;
-// interleaved f32: pos3, size2, rot1, rgba4  (10 floats)
-var STRIDE=10;
-var src = new Float32Array(TOTAL*STRIDE);
-var pmax=0;
-(function build(){
-  var i, o=0;
-  var Lx=-0.48,Ly=0.72,Lz=-0.5;
-  function put(x,y,z, sx,sy, rot, r,g,b,a){
-    src[o]=x; src[o+1]=y; src[o+2]=z; src[o+3]=sx; src[o+4]=sy; src[o+5]=rot;
-    src[o+6]=r; src[o+7]=g; src[o+8]=b; src[o+9]=a; o+=STRIDE;
-    if(y>pmax) pmax=y;
-  }
-  // glacier flow channel: meandering line down the +z face
-  function chanDist(x,z){ var cx=Math.sin(z*.045)*22 + Math.sin(z*.013+2)*10; return Math.abs(x-cx); }
-  for(i=0;i<N;i++){
-    var ang=rnd()*Math.PI*2, rad=Math.sqrt(rnd())*EXT;
-    var x=Math.cos(ang)*rad, z=Math.sin(ang)*rad;
-    var y=height(x,z);
-    var nrm=normalAt(x,z), slope=1-nrm[1];
-    var altN=y/ (pmax||105);
-    var snowline = 34 + fbm(x*.05,z*.05)*18;
-    var r,g,b,a, s;
-    var isChan = z>4 && chanDist(x,z)<9+fbm(z*.08,1)*5 && y<snowline+22 && y>3;
-    if(isChan){                                   // glacier ice tongue
-      var t=.55+rnd()*.4;
-      r=.36*t+.20; g=.55*t+.24; b=.82*t+.28; a=.85;
-      s=1.6+rnd()*2.6;
-    } else if((y>snowline && slope<.62) || (y>snowline*1.6)){  // snow (summit always holds)
-      var w=.86+rnd()*.14, tint=.94+fbm(x*.2,z*.2)*.08;
-      r=w*.90*tint; g=w*.95*tint; b=w*1.0*tint; a=.92;
-      s=1.5+rnd()*2.8;
-    } else {                                      // rock
-      var k=.10+rnd()*.10 + slope*.05;
-      r=k*.85; g=k*1.0; b=k*1.28; a=.95;
-      s=1.8+rnd()*3.4;
-    }
-    // baked moonlight from upper-left + sink slightly + elongate along slope
-    var lit=.42+.58*Math.max(0, nrm[0]*Lx+nrm[1]*Ly+nrm[2]*Lz);
-    put(x, y-.6-rnd()*1.2, z, s*(1+slope*.9), s*(1-slope*.35), Math.atan2(nrm[0],nrm[2]), r*lit,g*lit,b*lit,a);
-  }
-  for(i=0;i<SPARKN;i++){                          // snow sparkle
-    var ang2=rnd()*Math.PI*2, rad2=Math.sqrt(rnd())*70;
-    var x2=Math.cos(ang2)*rad2, z2=Math.sin(ang2)*rad2, y2=height(x2,z2);
-    if(y2<30){ i--; continue; }
-    put(x2, y2+.4, z2, .28+rnd()*.5, .28+rnd()*.5, rnd()*6.28, 1,1,1,.95);
-  }
-  for(i=0;i<FOGN;i++){                            // valley fog
-    var ang3=rnd()*Math.PI*2, rad3=60+Math.sqrt(rnd())*130;
-    var x3=Math.cos(ang3)*rad3, z3=Math.sin(ang3)*rad3;
-    var y3=Math.max(height(x3,z3),0)+2+rnd()*7;
-    var f=.5+rnd()*.5;
-    put(x3, y3, z3, 14+rnd()*20, 5+rnd()*7, rnd()*6.28, .07*f,.10*f,.16*f, .028+rnd()*.03);
-  }
-})();
-
-/* ================= WASM depth sort (hand-assembled, 381 bytes) ================= */
-var WASM_B64='AGFzbQEAAAABCgFgBn99fX19fQADAgEABQMBAHAHDgIEc29ydAAAA21lbQIACs0CAcoCAwJ/AX0Df0EAIQYCQANAIAZBgIAETg0BQYCAgAIgBkECdGpBADYCACAGQQFqIQYMAAsLQQAhBgJAA0AgBiAATg0BIAZBDGwhByAHKgIAIAGUIAcqAgQgApSSIAcqAgggA5SSIQggCCAEkyAFlEMAAAAAl0MA/39HlqghCUGAgMABIAZBAnRqIAk2AgBBgICAAiAJQQJ0aiILIAsoAgBBAWo2AgAgBkEBaiEGDAALC0EAIQpB//8DIQYCQANAIAZBAEgNAUGAgIACIAZBAnRqIQcgBygCACELIAcgCjYCACAKIAtqIQogBkEBayEGDAALC0EAIQYCQANAIAYgAE4NAUGAgMABIAZBAnRqKAIAIQlBgICAAiAJQQJ0aiEHIAcoAgAhC0GAgMACIAtBAnRqIAY2AgAgByALQQFqNgIAIAZBAWohBgwACwsL';
-var wasmSort=null, wasmMem=null, wasmPos=null, wasmOut=null;
-try{
-  var raw=atob(WASM_B64), bytes=new Uint8Array(raw.length);
-  for(var bi=0;bi<raw.length;bi++) bytes[bi]=raw.charCodeAt(bi);
-  var wmod=new WebAssembly.Module(bytes.buffer);
-  var winst=new WebAssembly.Instance(wmod);
-  wasmSort=winst.exports.sort; wasmMem=winst.exports.mem;
-  wasmPos=new Float32Array(wasmMem.buffer,0,TOTAL*3);
-  wasmOut=new Uint32Array(wasmMem.buffer,0x500000,TOTAL);
-  for(var si=0;si<TOTAL;si++){ wasmPos[si*3]=src[si*STRIDE]; wasmPos[si*3+1]=src[si*STRIDE+1]; wasmPos[si*3+2]=src[si*STRIDE+2]; }
-}catch(e){ console.warn('WASM unavailable, falling back to JS sort', e); }
-var jsIdx=null;
-function depthSort(vx,vy,vz){
-  // bbox depth range
-  var mn=1e9,mx=-1e9,c=[[-EXT,0,-EXT],[EXT,0,-EXT],[-EXT,0,EXT],[EXT,0,EXT],[0,pmax+8,0],[0,pmax+8,60]];
-  for(var i=0;i<c.length;i++){ var d=c[i][0]*vx+c[i][1]*vy+c[i][2]*vz; if(d<mn)mn=d; if(d>mx)mx=d; }
-  var inv=65535/((mx-mn)||1);
-  if(wasmSort){ wasmSort(LIVE,vx,vy,vz,mn,inv); return wasmOut; }
-  if(!jsIdx||jsIdx.length!==LIVE){ jsIdx=new Uint32Array(LIVE); }
-  var keys=new Float32Array(LIVE);
-  for(var j=0;j<LIVE;j++){ jsIdx[j]=j; keys[j]=src[j*STRIDE]*vx+src[j*STRIDE+1]*vy+src[j*STRIDE+2]*vz; }
-  Array.prototype.sort.call(jsIdx,function(a,b){return keys[b]-keys[a]});
-  return jsIdx;
-}
-
-/* ================= WebGL2 splat renderer ================= */
+/* ================= WebGL2 raymarched terrain ================= */
 var glc=document.getElementById('gl');
-var gl=glc.getContext('webgl2',{alpha:true,antialias:false,depth:false,premultipliedAlpha:true});
-var draw=new Float32Array(TOTAL*STRIDE);
-var prog=null, vao=null, instBuf=null, uV,uP,uFogD,uFogC,uWarmLoc;
+var gl=glc.getContext('webgl2',{alpha:false,antialias:false,depth:false});
+var prog=null,uRes,uCamPos,uCamRight,uCamUp,uCamFwd,uSunDir,uDay,uTime,uQ;
 if(gl){
-  function sh(type,srcc){ var s=gl.createShader(type); gl.shaderSource(s,srcc); gl.compileShader(s);
+  var VS='#version 300 es\nlayout(location=0) in vec2 q; void main(){ gl_Position=vec4(q,0.,1.); }';
+  var FS=`#version 300 es
+precision highp float;
+out vec4 O;
+uniform vec2 uRes;
+uniform vec3 uCamPos,uCamRight,uCamUp,uCamFwd,uSunDir;
+uniform float uDay,uTime,uQ;
+
+/* ---------- noise ---------- */
+float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+float noise(vec2 p){
+  vec2 i=floor(p), f=fract(p);
+  vec2 u=f*f*(3.-2.*f);
+  float a=hash(i), b=hash(i+vec2(1,0)), c=hash(i+vec2(0,1)), d=hash(i+vec2(1,1));
+  return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+}
+const mat2 ROT=mat2(0.8,-0.6,0.6,0.8);
+float fbm3(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*noise(p); p=ROT*p*2.02; a*=.5; } return s; }
+float fbm5(vec2 p){ float s=0.,a=.5; for(int i=0;i<5;i++){ s+=a*noise(p); p=ROT*p*2.02; a*=.5; } return s; }
+float ridged(vec2 p){ float s=0.,a=.5; for(int i=0;i<5;i++){ float n=1.-abs(2.*noise(p)-1.); s+=a*n*n; p=ROT*p*2.07; a*=.5; } return s; }
+
+/* ---------- terrain: a full range along x, giant focal peak at origin ---------- */
+float H(vec2 x){
+  vec2 p=x*0.0011;
+  float w=fbm3(p*1.7);
+  float r=ridged(p+0.42*w);
+  float band=exp(-pow(x.y/300.0,2.0));                    // crest of the range near z=0
+  float focal=340.0*exp(-(x.x*x.x+1.55*x.y*x.y)/(2.0*300.0*300.0)); // the big one
+  float rolling=55.0*fbm3(p*3.1)*(1.0-band*0.45);         // foothills & valley texture
+  float detail=10.0*noise(x*0.045)+3.5*noise(x*0.16);      // crags & rubble up close
+  return r*(105.0+430.0*band)+focal+rolling+detail-42.0;
+}
+/* cheaper variant for shadow rays */
+float Hs(vec2 x){
+  vec2 p=x*0.0011;
+  float r=ridged(p);
+  float band=exp(-pow(x.y/300.0,2.0));
+  float focal=340.0*exp(-(x.x*x.x+1.55*x.y*x.y)/(2.0*300.0*300.0));
+  return r*(105.0+430.0*band)+focal-42.0;
+}
+
+/* ---------- sky ---------- */
+vec3 sunColor(){ return mix(vec3(0.75,0.82,1.0)*0.32, vec3(1.0,0.62,0.32)*1.35, uDay); }
+vec3 skyCol(vec3 rd){
+  float horiz=pow(1.0-max(rd.y,0.0),3.0);
+  vec3 nightTop=vec3(0.012,0.022,0.045), nightHor=vec3(0.07,0.12,0.19);
+  vec3 dawnTop=vec3(0.16,0.26,0.47),  dawnHor=vec3(0.98,0.55,0.30);
+  vec3 top=mix(nightTop,dawnTop,uDay), hor=mix(nightHor,dawnHor,uDay);
+  vec3 col=mix(top,hor,horiz);
+  // sun glow + disc
+  float sd=max(dot(rd,uSunDir),0.0);
+  col+=sunColor()*(pow(sd,7.0)*0.22+pow(sd,64.0)*0.8+pow(sd,900.0)*4.0)*(0.25+0.75*uDay);
+  // moon at night
+  vec3 mdir=normalize(vec3(-0.42,0.52,0.42));
+  float md=max(dot(rd,mdir),0.0);
+  col+=vec3(0.55,0.65,0.85)*(pow(md,1400.0)*1.6+pow(md,90.0)*0.06)*(1.0-uDay);
+  // stars
+  if(rd.y>0.02){
+    vec2 sp=rd.xz/(rd.y+0.55);
+    vec2 id=floor(sp*220.0);
+    float h1=hash(id);
+    if(h1>0.9965){
+      float tw=0.55+0.45*sin(uTime*0.7+h1*80.0);
+      col+=vec3(0.9,0.95,1.0)*tw*(1.0-uDay)*smoothstep(0.02,0.2,rd.y)*0.85;
+    }
+  }
+  // cirrus clouds, drifting; catch the dawn light
+  if(rd.y>0.015){
+    vec2 cp=rd.xz/(rd.y+0.22)*2.4+vec2(uTime*0.006,0.0);
+    float c=fbm5(cp);
+    float cl=smoothstep(0.52,0.78,c)*exp(-rd.y*2.6)*0.75;
+    vec3 cCol=mix(vec3(0.10,0.14,0.22),vec3(1.0,0.66,0.44)*1.15,uDay);
+    col=mix(col,cCol,cl*(0.35+0.65*uDay));
+  }
+  return col;
+}
+
+/* ---------- march ---------- */
+float march(vec3 ro, vec3 rd, float tmax, out vec3 pos){
+  float t=1.0;
+  int STEPS=int(230.0*uQ);
+  for(int i=0;i<300;i++){
+    if(i>=STEPS) break;
+    pos=ro+rd*t;
+    float d=pos.y-H(pos.xz);
+    if(d<0.0018*t) return t;
+    t+=d*0.46;
+    if(t>tmax) break;
+  }
+  return -1.0;
+}
+float softShadow(vec3 ro, vec3 rd){
+  if(uQ<0.6) return 1.0;
+  float res=1.0, t=8.0;
+  for(int i=0;i<18;i++){
+    vec3 p=ro+rd*t;
+    float d=p.y-Hs(p.xz);
+    if(d<0.5) return 0.15;
+    res=min(res,3.5*d/t);
+    t+=clamp(d,4.0,42.0);
+    if(t>620.0) break;
+  }
+  return clamp(res,0.15,1.0);
+}
+vec3 normalAt(vec2 x, float t){
+  float e=max(0.35,0.0011*t);
+  return normalize(vec3(H(x-vec2(e,0))-H(x+vec2(e,0)), 2.0*e, H(x-vec2(0,e))-H(x+vec2(0,e))));
+}
+
+void main(){
+  vec2 uv=(2.0*gl_FragCoord.xy-uRes)/uRes.y;
+  vec3 rd=normalize(uCamFwd*1.45+uCamRight*uv.x+uCamUp*uv.y);
+  vec3 ro=uCamPos;
+  float tmax=3400.0;
+  vec3 pos; float t=march(ro,rd,tmax,pos);
+  vec3 col;
+  vec3 sky=skyCol(rd);
+  if(t<0.0){ col=sky; }
+  else{
+    vec3 n=normalAt(pos.xz,t);
+    float slope=1.0-n.y;
+    /* ----- material ----- */
+    float strat=0.82+0.36*noise(vec2(pos.y*0.055, fbm3(pos.xz*0.02)*6.0));
+    vec3 rock=mix(vec3(0.165,0.170,0.185),vec3(0.30,0.30,0.31),fbm3(pos.xz*0.016))*strat;
+    vec3 scrub=vec3(0.14,0.16,0.11)*(0.7+0.6*fbm3(pos.xz*0.05));
+    float scrubAmt=smoothstep(150.0,40.0,pos.y)*smoothstep(0.42,0.18,slope);
+    vec3 alb=mix(rock,scrub,scrubAmt);
+    float snowLine=150.0+70.0*fbm3(pos.xz*0.004);
+    float snow=smoothstep(snowLine,snowLine+45.0,pos.y)*smoothstep(0.78,0.30,slope);
+    snow=max(snow, smoothstep(snowLine+130.0,snowLine+200.0,pos.y)*smoothstep(0.95,0.45,slope));
+    alb=mix(alb,vec3(0.93,0.95,0.99),snow);
+    /* ----- light ----- */
+    vec3 sc=sunColor();
+    float sh=softShadow(pos+n*2.0,uSunDir);
+    float dif=max(dot(n,uSunDir),0.0);
+    float amb=0.5+0.5*n.y;
+    vec3 ambC=mix(vec3(0.10,0.16,0.28),vec3(0.34,0.30,0.38),uDay);
+    float bnc=max(dot(n,normalize(vec3(-uSunDir.x,0.0,-uSunDir.z))),0.0);
+    col=alb*(dif*sc*2.1*sh + amb*ambC*(0.75-0.2*uDay) + bnc*sc*0.14);
+    /* snow sparkle-free specular sheen at dawn */
+    vec3 hv=normalize(uSunDir-rd);
+    col+=sc*snow*pow(max(dot(n,hv),0.0),22.0)*0.35*sh;
+    /* alpenglow bias: summits catch light first */
+    col+=sc*snow*smoothstep(360.0,620.0,pos.y)*0.22*uDay;
+    /* ----- aerial perspective ----- */
+    float hgt=clamp(pos.y/420.0,0.0,1.0);
+    float fo=1.0-exp(-t*(0.00082-0.00034*uDay)*(1.35-0.85*hgt));
+    vec3 fogC=mix(mix(vec3(0.055,0.085,0.14),vec3(0.46,0.42,0.46),uDay), sky, 0.5);
+    col=mix(col,fogC,fo);
+    /* horizon blend */
+    col=mix(col,sky,smoothstep(0.72,1.0,fo));
+  }
+  /* gentle filmic-ish curve */
+  col=col/(1.0+col);
+  col=pow(col,vec3(0.86));
+  O=vec4(col,1.0);
+}`;
+  function sh(t,src){ var s=gl.createShader(t); gl.shaderSource(s,src); gl.compileShader(s);
     if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; }
-  var vs=sh(gl.VERTEX_SHADER,`#version 300 es
-    layout(location=0) in vec2 q;
-    layout(location=1) in vec3 ip;
-    layout(location=2) in vec2 isz;
-    layout(location=3) in float irot;
-    layout(location=4) in vec4 icol;
-    uniform mat4 uV,uP; uniform float uFogD;
-    out vec2 vq; out vec4 vcol; out float vfog; out float vy;
-    void main(){
-      vec4 c=uV*vec4(ip,1.0);
-      float pz=max(-c.z,0.001);
-      // cap projected size so near splats can never flood fill-rate
-      float hsz=max(isz.x,isz.y)*uP[1][1]/pz;
-      float shrink=min(1.0, 0.4/max(hsz,1e-5));
-      vec2 sz=isz*shrink;
-      float cr=cos(irot),sr=sin(irot);
-      vec2 o=vec2(q.x*cr-q.y*sr, q.x*sr+q.y*cr)*sz;
-      c.xy+=o;
-      gl_Position=uP*c;
-      vq=q; vcol=icol; vy=ip.y;
-      vcol.a*=smoothstep(2.0,7.0,pz);   // fade splats the camera flies through
-      float df=clamp(1.0-exp(uFogD*c.z),0.0,1.0);
-      float hf=exp(-max(ip.y,0.0)*0.055)*0.6;
-      vfog=clamp(df+hf,0.0,1.0);
-    }`);
-  var fs=sh(gl.FRAGMENT_SHADER,`#version 300 es
-    precision mediump float;
-    in vec2 vq; in vec4 vcol; in float vfog; in float vy;
-    uniform vec3 uFogC; uniform float uWarm;
-    out vec4 o;
-    void main(){
-      float r2=dot(vq,vq);
-      if(r2>1.0) discard;
-      float a=exp(-4.2*r2)*vcol.a;
-      float glow=uWarm*smoothstep(12.0,68.0,vy);   // alpenglow reaches the summit first
-      vec3 col=vcol.rgb;
-      col=mix(col, col*vec3(1.30,0.95,0.68)+vec3(0.14,0.045,0.0), glow);
-      col=mix(col,uFogC,vfog);
-      o=vec4(col*a,a);
-    }`);
-  prog=gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog);
+  prog=gl.createProgram();
+  gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));
+  gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));
+  gl.linkProgram(prog);
   if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(prog));
-  uV=gl.getUniformLocation(prog,'uV'); uP=gl.getUniformLocation(prog,'uP');
-  uFogD=gl.getUniformLocation(prog,'uFogD'); uFogC=gl.getUniformLocation(prog,'uFogC');
-  var uWarm=gl.getUniformLocation(prog,'uWarm');
-  uWarmLoc=uWarm;
-  vao=gl.createVertexArray(); gl.bindVertexArray(vao);
-  var quad=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,quad);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, -1,1, 1,1]),gl.STATIC_DRAW);
+  var buf=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 3,-1, -1,3]),gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-  instBuf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,instBuf);
-  gl.bufferData(gl.ARRAY_BUFFER,draw.byteLength,gl.DYNAMIC_DRAW);
-  var offs=[[1,3,0],[2,2,12],[3,1,20],[4,4,24]];
-  offs.forEach(function(d){ gl.enableVertexAttribArray(d[0]); gl.vertexAttribPointer(d[0],d[1],gl.FLOAT,false,STRIDE*4,d[2]); gl.vertexAttribDivisor(d[0],1); });
-  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
-  gl.clearColor(0,0,0,0);
+  uRes=gl.getUniformLocation(prog,'uRes');
+  uCamPos=gl.getUniformLocation(prog,'uCamPos');
+  uCamRight=gl.getUniformLocation(prog,'uCamRight');
+  uCamUp=gl.getUniformLocation(prog,'uCamUp');
+  uCamFwd=gl.getUniformLocation(prog,'uCamFwd');
+  uSunDir=gl.getUniformLocation(prog,'uSunDir');
+  uDay=gl.getUniformLocation(prog,'uDay');
+  uTime=gl.getUniformLocation(prog,'uTime');
+  uQ=gl.getUniformLocation(prog,'uQ');
 } else { glc.style.display='none'; }
 
-/* ================= mat4 helpers ================= */
-function lookAt(ex,ey,ez, cx,cy,cz){
-  var zx=ex-cx,zy=ey-cy,zz=ez-cz, zl=Math.hypot(zx,zy,zz); zx/=zl;zy/=zl;zz/=zl;
-  var xx=zz*0-1*zy? 0:0; // placeholder
-  var upx=0,upy=1,upz=0;
-  var xx2=upy*zz-upz*zy, xy2=upz*zx-upx*zz, xz2=upx*zy-upy*zx, xl=Math.hypot(xx2,xy2,xz2); xx2/=xl;xy2/=xl;xz2/=xl;
-  var yx=zy*xz2-zz*xy2, yy=zz*xx2-zx*xz2, yz=zx*xy2-zy*xx2;
-  return new Float32Array([xx2,yx,zx,0, xy2,yy,zy,0, xz2,yz,zz,0,
-    -(xx2*ex+xy2*ey+xz2*ez), -(yx*ex+yy*ey+yz*ez), -(zx*ex+zy*ey+zz*ez), 1]);
-}
-function persp(fov,asp,n,f){
-  var t=1/Math.tan(fov/2);
-  return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]);
-}
-
-/* ================= camera path (scroll-driven) ================= */
-var KF=[ // p, theta(π), radius, height, lookY, fog
-  [0.00,-0.32,305,112,52,.0085],
-  [0.20, 0.10,220, 76,48,.010 ],
-  [0.42, 0.58,152, 50,44,.014 ],
-  [0.64, 1.06,120, 38,58,.016 ],
-  [0.84, 1.55,170, 62,50,.012 ],
-  [1.00, 1.96,330,118,50,.008 ]
+/* ================= camera: traverse the range, focal peak anchors ================= */
+var KF=[ // p, camX,camY,camZ, lookX,lookY,lookZ
+  [0.00, -680,315,660,  -120,310,0],
+  [0.20, -390,285,570,   -20,330,0],
+  [0.42, -105,270,490,    80,340,-30],
+  [0.64,  205,290,470,     0,400,0],
+  [0.84,  380,330,540,     0,450,-40],
+  [1.00,  130,455,905,     0,520,-80]
 ];
 function ss(t){ return t*t*(3-2*t); }
 function camAt(p){
   var i=0; while(i<KF.length-2 && p>KF[i+1][0]) i++;
   var a=KF[i], b=KF[i+1], t=ss(Math.min(1,Math.max(0,(p-a[0])/(b[0]-a[0]))));
   function L(j){ return a[j]+(b[j]-a[j])*t; }
-  return { th:L(1)*Math.PI, r:L(2), h:L(3), ly:L(4), fog:L(5) };
+  return { ex:L(1),ey:L(2),ez:L(3), lx:L(4),ly:L(5),lz:L(6) };
+}
+function dayAt(p){ var d=Math.max(0,Math.min(1,(p-0.38)/0.58)); return d*d*(3-2*d); }
+function sunAt(p){
+  var d=dayAt(p);
+  var elev=-0.30+0.46*d;             // climbs toward the horizon
+  var az=2.45-0.35*d;                 // swings behind the focal peak
+  var x=Math.cos(az), z=Math.sin(az);
+  var l=Math.hypot(x,elev,z);
+  return [x/l,elev/l,z/l];
 }
 
-/* ================= sky (canvas 2D, layer 0) ================= */
-var sky=document.getElementById('sky'), sctx=sky.getContext('2d');
-var stars=[];
-for(var st=0;st<420;st++) stars.push([rnd(),rnd()*.72,rnd()*1.3+.3,rnd()*6.28]);
-function lerpN(a,b,t){ return a+(b-a)*t; }
-function lerpC(a,b,t){ return [lerpN(a[0],b[0],t),lerpN(a[1],b[1],t),lerpN(a[2],b[2],t)]; }
-function cssC(c){ return 'rgb('+Math.round(c[0])+','+Math.round(c[1])+','+Math.round(c[2])+')'; }
-// night -> pre-dawn -> alpenglow -> sunrise
-var SKYPAL=[
-  {p:0.00, top:[4,6,11],   mid:[10,18,32],  low:[18,35,58],   hor:[22,41,63]},
-  {p:0.45, top:[5,9,18],   mid:[14,24,44],  low:[34,50,80],   hor:[54,70,102]},
-  {p:0.75, top:[9,16,32],  mid:[36,50,84],  low:[118,84,96],  hor:[192,114,82]},
-  {p:1.00, top:[12,24,46], mid:[50,70,105], low:[164,108,95], hor:[226,142,92]}
-];
-function skyAt(p){
-  var i=0; while(i<SKYPAL.length-2 && p>SKYPAL[i+1].p) i++;
-  var a=SKYPAL[i], b=SKYPAL[i+1], t=Math.min(1,Math.max(0,(p-a.p)/(b.p-a.p)));
-  t=t*t*(3-2*t);
-  return { top:lerpC(a.top,b.top,t), mid:lerpC(a.mid,b.mid,t), low:lerpC(a.low,b.low,t), hor:lerpC(a.hor,b.hor,t) };
-}
-function drawSky(t,p){
-  p=p||0;
-  var w=sky.width,h=sky.height,P=skyAt(p);
-  var g=sctx.createLinearGradient(0,0,0,h);
-  g.addColorStop(0,cssC(P.top)); g.addColorStop(.5,cssC(P.mid)); g.addColorStop(.82,cssC(P.low)); g.addColorStop(1,cssC(P.hor));
-  sctx.fillStyle=g; sctx.fillRect(0,0,w,h);
-  // rising sun
-  var sunT=Math.max(0,(p-.55)/.45);
-  if(sunT>0.01){
-    var sx=w*.63, sy=h*(1.04-sunT*.18), sr=h*(.06+sunT*.26);
-    var sg=sctx.createRadialGradient(sx,sy,0,sx,sy,sr*3);
-    sg.addColorStop(0,'rgba(255,216,172,'+(.9*sunT)+')');
-    sg.addColorStop(.22,'rgba(255,178,118,'+(.42*sunT)+')');
-    sg.addColorStop(1,'rgba(255,150,90,0)');
-    sctx.fillStyle=sg; sctx.beginPath(); sctx.arc(sx,sy,sr*3,0,6.28); sctx.fill();
-  }
-  // aurora fades out as dawn approaches
-  var aF=1-Math.min(1,Math.max(0,(p-.3)/.3));
-  if(aF>0.02){
-    for(var rb=0;rb<3;rb++){
-      var yb=h*(.16+rb*.09), amp=h*.045*(1+rb*.35), ph=t*.00006*(rb+1)+rb*2.1;
-      var grad=sctx.createLinearGradient(0,yb-amp*2,0,yb+amp*2);
-      var cA=rb===1?'rgba(120,205,190,':'rgba(126,168,224,';
-      grad.addColorStop(0,cA+'0)'); grad.addColorStop(.5,cA+((0.065-rb*.012)*aF)+')'); grad.addColorStop(1,cA+'0)');
-      sctx.fillStyle=grad;
-      sctx.beginPath(); sctx.moveTo(0,yb);
-      for(var x=0;x<=w;x+=w/48){ sctx.lineTo(x, yb+Math.sin(x*.004+ph)*amp+Math.sin(x*.0013-ph*1.7)*amp*.7); }
-      sctx.lineTo(w,yb+amp*3); sctx.lineTo(0,yb+amp*3); sctx.closePath(); sctx.fill();
-    }
-  }
-  // stars surrender to the light
-  var stF=1-Math.min(1,Math.max(0,(p-.5)/.35));
-  if(stF>0.02){
-    sctx.fillStyle='#DCE8F8';
-    for(var si2=0;si2<stars.length;si2++){
-      var s2=stars[si2], tw=.4+.6*Math.abs(Math.sin(t*.001+s2[3]));
-      sctx.globalAlpha=tw*.8*stF;
-      sctx.fillRect(s2[0]*w+mouseNX*6*s2[2], s2[1]*h, s2[2], s2[2]);
-    }
-    sctx.globalAlpha=1;
-  }
-}
-
-/* ================= snow (canvas 2D, layer 2) ================= */
-var snowC=document.getElementById('snow'), nctx=snowC.getContext('2d');
-var FLAKES = reduced?0 : (mobile?90:230);
-var flakes=[];
-for(var fl=0;fl<FLAKES;fl++) flakes.push({x:rnd(),y:rnd(),z:.3+rnd()*.7,ph:rnd()*6.28});
-var scrollVel=0;
-function drawSnow(t,dt){
-  var w=snowC.width,h=snowC.height;
-  nctx.clearRect(0,0,w,h);
-  nctx.fillStyle=cssC(lerpC([234,242,251],[255,226,200],Math.max(0,(scrollS-.55)/.45)));
-  for(var i=0;i<flakes.length;i++){
-    var f=flakes[i];
-    f.y+=(.018+f.z*.05)*dt*.06;
-    f.x+=(Math.sin(t*.0004+f.ph)*.012 - scrollVel*f.z*.00001)*dt*.06;
-    if(f.y>1.02){f.y=-.02; f.x=rnd();}
-    if(f.x>1.02)f.x=-.02; if(f.x<-.02)f.x=1.02;
-    nctx.globalAlpha=.25+f.z*.5;
-    var r=f.z*2.1*DPR;
-    nctx.beginPath(); nctx.arc(f.x*w,f.y*h,r,0,6.28); nctx.fill();
-  }
-  nctx.globalAlpha=1;
-}
-
-/* ================= resize ================= */
-function resize(){
-  var w=innerWidth,h=innerHeight;
-  sky.width=Math.round(w*DPR*.5); sky.height=Math.round(h*DPR*.5);
-  sky.style.width=w+'px'; sky.style.height=h+'px';
-  glc.width=Math.round(w*glDPR); glc.height=Math.round(h*glDPR); glc.style.width=w+'px'; glc.style.height=h+'px';
-  snowC.width=w*DPR; snowC.height=h*DPR; snowC.style.width=w+'px'; snowC.style.height=h+'px';
-  if(gl) gl.viewport(0,0,glc.width,glc.height);
-  drawSky(perf(),scrollS||0);
-}
-function perf(){ return performance.now(); }
-addEventListener('resize',resize);
-
-/* ================= main loop ================= */
-var scrollS=0, lastSortDir=null, lastT=perf(), lastScroll=0, lastSortT=-1e9;
+/* ================= input: drag orbit + parallax ================= */
 var orbitTarget=0, orbitCur=0, mouseNX=0, mouseNY=0, dragOn=false, dragX=0, dragStart=0;
 if(!mobile && !reduced){
   document.addEventListener('mousemove',function(e){
     mouseNX=(e.clientX/innerWidth)*2-1; mouseNY=(e.clientY/innerHeight)*2-1;
-    if(dragOn){
-      orbitTarget=Math.max(-1.15,Math.min(1.15, dragStart+(e.clientX-dragX)*-0.005));
-    }
+    if(dragOn) orbitTarget=Math.max(-0.9,Math.min(0.9, dragStart+(e.clientX-dragX)*-0.004));
   });
   document.addEventListener('mousedown',function(e){
     if(e.button!==0) return;
@@ -642,35 +532,38 @@ if(!mobile && !reduced){
     dragOn=false; document.body.style.cursor=''; document.body.style.userSelect='';
   });
 }
+
+/* ================= main loop ================= */
+var scrollS=0, lastT=perfNow(), lastScroll=0, scrollVel=0;
+var frameAcc=0, frameCnt=0;
 var pbar=document.getElementById('pbar');
 var running=true;
-var LIVE=TOTAL, frameAcc=0, frameCnt=0, degradeSteps=0;
-function decimate(){
-  // drop every other splat from the live set (keep array prefix compact)
-  var keep=0;
-  for(var i=0;i<LIVE;i++){
-    if(i%2===0){
-      if(keep!==i){
-        for(var k=0;k<STRIDE;k++) src[keep*STRIDE+k]=src[i*STRIDE+k];
-        if(wasmPos){ wasmPos[keep*3]=src[keep*STRIDE]; wasmPos[keep*3+1]=src[keep*STRIDE+1]; wasmPos[keep*3+2]=src[keep*STRIDE+2]; }
-      }
-      keep++;
-    }
-  }
-  if(wasmPos) for(var j=0;j<keep;j++){ wasmPos[j*3]=src[j*STRIDE]; wasmPos[j*3+1]=src[j*STRIDE+1]; wasmPos[j*3+2]=src[j*STRIDE+2]; }
-  LIVE=keep; lastSortDir=null; degradeSteps++;
+function perfNow(){ return performance.now(); }
+function resize(){
+  var w=innerWidth,h=innerHeight;
+  glc.width=Math.max(2,Math.round(w*glDPR)); glc.height=Math.max(2,Math.round(h*glDPR));
+  glc.style.width=w+'px'; glc.style.height=h+'px';
+  if(gl) gl.viewport(0,0,glc.width,glc.height);
 }
-document.addEventListener('visibilitychange',function(){ running=!document.hidden; if(running) requestAnimationFrame(tick); });
+addEventListener('resize',resize);
+document.addEventListener('visibilitychange',function(){
+  running=!document.hidden;
+  if(running){
+    scrollS=forceP!=null?forceP:(scrollY||document.documentElement.scrollTop)/((document.documentElement.scrollHeight-innerHeight)||1);
+    tick(perfNow(),true);
+    setTimeout(function(){ document.documentElement.classList.remove('no-anim'); },900);
+    requestAnimationFrame(tick);
+  }
+});
 function tick(t,force){
   if(!running&&!force) return;
   var dt=Math.min(250,t-lastT); lastT=t;
   frameAcc+=dt; frameCnt++;
-  if(frameCnt===12){
-    var avg=frameAcc/12;
-    if(avg>45 && LIVE>2500 && degradeSteps<5){
-      decimate();
-      if(avg>120 && LIVE>2500) decimate();
-      if(degradeSteps>=2 && glDPR>0.55){ glDPR*=0.6; resize(); }
+  if(frameCnt===14){
+    var avg=frameAcc/14;
+    if(avg>46){
+      if(QUALITY>0.5) QUALITY*=0.75;
+      else if(glDPR>0.38){ glDPR*=0.75; resize(); }
     }
     frameAcc=0; frameCnt=0;
   }
@@ -678,76 +571,54 @@ function tick(t,force){
   var target=forceP!=null?forceP:(scrollY||doc.scrollTop)/((doc.scrollHeight-innerHeight)||1);
   if(forceP!=null) scrollS=forceP;
   scrollVel=(scrollY-lastScroll); lastScroll=scrollY;
-  scrollS += (target-scrollS)*(reduced?1:.065);
+  scrollS += (target-scrollS)*(reduced?1:.07);
   pbar.style.width=(target*100)+'%';
 
-  drawSky(t,scrollS);
-  if(FLAKES) drawSnow(t,dt);
   orbitCur+=(orbitTarget-orbitCur)*.08;
-  if(!dragOn && Math.abs(scrollVel)>3) orbitTarget*=.9;   // scrolling gently reclaims the camera
+  if(!dragOn && Math.abs(scrollVel)>3) orbitTarget*=.9;
 
   if(gl){
-    var cam=camAt(reduced?.1:scrollS);
-    var thF=cam.th+orbitCur+mouseNX*.045;
-    var ex=Math.cos(thF)*cam.r, ey=cam.h-mouseNY*5, ez=Math.sin(thF)*cam.r;
-    var V=lookAt(ex,ey,ez, 0,cam.ly,0);
-    var P=persp(50*Math.PI/180, glc.width/glc.height, 1, 1400);
-    // view dir (from eye toward center)
-    var dx=0-ex, dy=cam.ly-ey, dz=0-ez, dl=Math.hypot(dx,dy,dz);
-    dx/=dl;dy/=dl;dz/=dl;
-    var need=!lastSortDir || ((t-lastSortT)>180 && (dx*lastSortDir[0]+dy*lastSortDir[1]+dz*lastSortDir[2])<0.9997);
-    if(need){
-      lastSortT=t;
-      var order=depthSort(dx,dy,dz);
-      for(var i=0;i<LIVE;i++){
-        var s=order[i]*STRIDE, d2=i*STRIDE;
-        for(var k=0;k<STRIDE;k++) draw[d2+k]=src[s+k];
-      }
-      gl.bindBuffer(gl.ARRAY_BUFFER,instBuf);
-      gl.bufferSubData(gl.ARRAY_BUFFER,0,draw);
-      lastSortDir=[dx,dy,dz];
-    }
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    var p=reduced?.12:scrollS;
+    var cam=camAt(p);
+    // orbit + parallax: rotate the eye around the look point
+    var dx0=cam.ex-cam.lx, dz0=cam.ez-cam.lz;
+    var rr=Math.hypot(dx0,dz0), a0=Math.atan2(dz0,dx0)+orbitCur+mouseNX*0.05;
+    var ex=cam.lx+Math.cos(a0)*rr, ez=cam.lz+Math.sin(a0)*rr, ey=cam.ey-mouseNY*10;
+    // basis
+    var fx=cam.lx-ex, fy=cam.ly-ey, fz=cam.lz-ez, fl=Math.hypot(fx,fy,fz); fx/=fl;fy/=fl;fz/=fl;
+    var rx=-fz, ry=0, rz=fx, rl=Math.hypot(rx,rz)||1; rx/=rl; rz/=rl;
+    var ux=ry*fz-rz*fy, uy=rz*fx-rx*fz, uz=rx*fy-ry*fx;
+    var sun=sunAt(p);
     gl.useProgram(prog);
-    gl.bindVertexArray(vao);
-    gl.uniformMatrix4fv(uV,false,V);
-    gl.uniformMatrix4fv(uP,false,P);
-    gl.uniform1f(uFogD,cam.fog*0.14);
-    var wm=Math.max(0,Math.min(1,(scrollS-.5)/.42));
-    wm=wm*wm*(3-2*wm);
-    gl.uniform1f(uWarmLoc,wm);
-    var fogC=lerpC([.082,.148,.226],[.52,.34,.27],wm*.9);
-    gl.uniform3f(uFogC,fogC[0],fogC[1],fogC[2]);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,LIVE);
+    gl.uniform2f(uRes,glc.width,glc.height);
+    gl.uniform3f(uCamPos,ex,ey,ez);
+    gl.uniform3f(uCamFwd,fx,fy,fz);
+    gl.uniform3f(uCamRight,rx,ry,rz);
+    gl.uniform3f(uCamUp,ux,uy,uz);
+    gl.uniform3f(uSunDir,sun[0],sun[1],sun[2]);
+    gl.uniform1f(uDay,dayAt(p));
+    gl.uniform1f(uTime,t*0.001);
+    gl.uniform1f(uQ,QUALITY);
+    gl.drawArrays(gl.TRIANGLES,0,3);
   }
   requestAnimationFrame(tick);
 }
 resize();
 requestAnimationFrame(tick);
-// Hidden/prerendered pages get no rAF: render on demand so the page is always
-// correct the moment it becomes visible (or is screenshotted).
 if(document.hidden) document.documentElement.classList.add('no-anim');
-document.addEventListener('visibilitychange',function(){
-  if(!document.hidden){
-    running=true;
-    scrollS=forceP!=null?forceP:(scrollY||document.documentElement.scrollTop)/((document.documentElement.scrollHeight-innerHeight)||1);
-    lastSortDir=null; tick(perf(),true);
-    setTimeout(function(){ document.documentElement.classList.remove('no-anim'); },900);
-  }
-});
 addEventListener('scroll',function(){
   if(document.hidden){
-    scrollS=(scrollY||document.documentElement.scrollTop)/((document.documentElement.scrollHeight-innerHeight)||1);
-    lastSortDir=null;
-    tick(perf(),true);
+    scrollS=forceP!=null?forceP:(scrollY||document.documentElement.scrollTop)/((document.documentElement.scrollHeight-innerHeight)||1);
+    tick(perfNow(),true);
   }
 },{passive:true});
-if(document.hidden){ scrollS=0; tick(perf(),true); }
+if(document.hidden){ scrollS=forceP!=null?forceP:0; tick(perfNow(),true); }
 
-/* ================= reveals + ring ================= */
+/* ================= reveals + mocks ================= */
 var io=new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } }); },{threshold:.25});
 document.querySelectorAll('.rv').forEach(function(el){ io.observe(el); });
-// heatmap mock
+var seed=97;
+function rnd(){ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; }
 var heat=document.getElementById('heat');
 for(var hi=0;hi<30;hi++){
   var lvl=rnd(); var cell=document.createElement('i');
@@ -756,7 +627,6 @@ for(var hi=0;hi<30;hi++){
   else if(lvl>.25) cell.style.setProperty('--c','rgba(143,184,232,.22)');
   heat.appendChild(cell);
 }
-// idle ring sweep
 if(!reduced){ var ring=document.getElementById('ringArc'), r0=90;
   setInterval(function(){ r0=r0<=20?200:r0-1; ring.setAttribute('stroke-dashoffset',r0); },90); }
 })();

@@ -298,6 +298,7 @@
 var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 var mobile = matchMedia('(max-width:768px), (pointer:coarse)').matches;
 var lite = /lite/.test(location.search+location.hash);
+var forceP = (function(){ var m=(location.hash||'').match(/p=([0-9.]+)/); return m?Math.min(1,Math.max(0,parseFloat(m[1]))):null; })();
 (function(){ try{
   var tc=document.createElement('canvas'), tg=tc.getContext('webgl2');
   if(tg){ var dbg=tg.getExtension('WEBGL_debug_renderer_info');
@@ -428,7 +429,7 @@ function depthSort(vx,vy,vz){
 var glc=document.getElementById('gl');
 var gl=glc.getContext('webgl2',{alpha:true,antialias:false,depth:false,premultipliedAlpha:true});
 var draw=new Float32Array(TOTAL*STRIDE);
-var prog=null, vao=null, instBuf=null, uV,uP,uFogD,uFogC;
+var prog=null, vao=null, instBuf=null, uV,uP,uFogD,uFogC,uWarmLoc;
 if(gl){
   function sh(type,srcc){ var s=gl.createShader(type); gl.shaderSource(s,srcc); gl.compileShader(s);
     if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; }
@@ -439,7 +440,7 @@ if(gl){
     layout(location=3) in float irot;
     layout(location=4) in vec4 icol;
     uniform mat4 uV,uP; uniform float uFogD;
-    out vec2 vq; out vec4 vcol; out float vfog;
+    out vec2 vq; out vec4 vcol; out float vfog; out float vy;
     void main(){
       vec4 c=uV*vec4(ip,1.0);
       float pz=max(-c.z,0.001);
@@ -451,7 +452,7 @@ if(gl){
       vec2 o=vec2(q.x*cr-q.y*sr, q.x*sr+q.y*cr)*sz;
       c.xy+=o;
       gl_Position=uP*c;
-      vq=q; vcol=icol;
+      vq=q; vcol=icol; vy=ip.y;
       vcol.a*=smoothstep(2.0,7.0,pz);   // fade splats the camera flies through
       float df=clamp(1.0-exp(uFogD*c.z),0.0,1.0);
       float hf=exp(-max(ip.y,0.0)*0.055)*0.6;
@@ -459,20 +460,25 @@ if(gl){
     }`);
   var fs=sh(gl.FRAGMENT_SHADER,`#version 300 es
     precision mediump float;
-    in vec2 vq; in vec4 vcol; in float vfog;
-    uniform vec3 uFogC;
+    in vec2 vq; in vec4 vcol; in float vfog; in float vy;
+    uniform vec3 uFogC; uniform float uWarm;
     out vec4 o;
     void main(){
       float r2=dot(vq,vq);
       if(r2>1.0) discard;
       float a=exp(-4.2*r2)*vcol.a;
-      vec3 col=mix(vcol.rgb,uFogC,vfog);
+      float glow=uWarm*smoothstep(12.0,68.0,vy);   // alpenglow reaches the summit first
+      vec3 col=vcol.rgb;
+      col=mix(col, col*vec3(1.30,0.95,0.68)+vec3(0.14,0.045,0.0), glow);
+      col=mix(col,uFogC,vfog);
       o=vec4(col*a,a);
     }`);
   prog=gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog);
   if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(prog));
   uV=gl.getUniformLocation(prog,'uV'); uP=gl.getUniformLocation(prog,'uP');
   uFogD=gl.getUniformLocation(prog,'uFogD'); uFogC=gl.getUniformLocation(prog,'uFogC');
+  var uWarm=gl.getUniformLocation(prog,'uWarm');
+  uWarmLoc=uWarm;
   vao=gl.createVertexArray(); gl.bindVertexArray(vao);
   var quad=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,quad);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1, 1,-1, -1,1, 1,1]),gl.STATIC_DRAW);
@@ -507,45 +513,77 @@ var KF=[ // p, theta(π), radius, height, lookY, fog
   [0.42, 0.58,152, 50,44,.014 ],
   [0.64, 1.06,120, 38,58,.016 ],
   [0.84, 1.55,170, 62,50,.012 ],
-  [1.00, 1.96,265,102,54,.008 ]
+  [1.00, 1.96,330,118,50,.008 ]
 ];
 function ss(t){ return t*t*(3-2*t); }
 function camAt(p){
   var i=0; while(i<KF.length-2 && p>KF[i+1][0]) i++;
   var a=KF[i], b=KF[i+1], t=ss(Math.min(1,Math.max(0,(p-a[0])/(b[0]-a[0]))));
   function L(j){ return a[j]+(b[j]-a[j])*t; }
-  var th=L(1)*Math.PI, r=L(2), h=L(3), ly=L(4), fog=L(5);
-  return { ex:Math.cos(th)*r, ey:h, ez:Math.sin(th)*r, ly:ly, fog:fog };
+  return { th:L(1)*Math.PI, r:L(2), h:L(3), ly:L(4), fog:L(5) };
 }
 
 /* ================= sky (canvas 2D, layer 0) ================= */
 var sky=document.getElementById('sky'), sctx=sky.getContext('2d');
 var stars=[];
 for(var st=0;st<420;st++) stars.push([rnd(),rnd()*.72,rnd()*1.3+.3,rnd()*6.28]);
-function drawSky(t){
-  var w=sky.width,h=sky.height;
+function lerpN(a,b,t){ return a+(b-a)*t; }
+function lerpC(a,b,t){ return [lerpN(a[0],b[0],t),lerpN(a[1],b[1],t),lerpN(a[2],b[2],t)]; }
+function cssC(c){ return 'rgb('+Math.round(c[0])+','+Math.round(c[1])+','+Math.round(c[2])+')'; }
+// night -> pre-dawn -> alpenglow -> sunrise
+var SKYPAL=[
+  {p:0.00, top:[4,6,11],   mid:[10,18,32],  low:[18,35,58],   hor:[22,41,63]},
+  {p:0.45, top:[5,9,18],   mid:[14,24,44],  low:[34,50,80],   hor:[54,70,102]},
+  {p:0.75, top:[9,16,32],  mid:[36,50,84],  low:[118,84,96],  hor:[192,114,82]},
+  {p:1.00, top:[12,24,46], mid:[50,70,105], low:[164,108,95], hor:[226,142,92]}
+];
+function skyAt(p){
+  var i=0; while(i<SKYPAL.length-2 && p>SKYPAL[i+1].p) i++;
+  var a=SKYPAL[i], b=SKYPAL[i+1], t=Math.min(1,Math.max(0,(p-a.p)/(b.p-a.p)));
+  t=t*t*(3-2*t);
+  return { top:lerpC(a.top,b.top,t), mid:lerpC(a.mid,b.mid,t), low:lerpC(a.low,b.low,t), hor:lerpC(a.hor,b.hor,t) };
+}
+function drawSky(t,p){
+  p=p||0;
+  var w=sky.width,h=sky.height,P=skyAt(p);
   var g=sctx.createLinearGradient(0,0,0,h);
-  g.addColorStop(0,'#04060B'); g.addColorStop(.55,'#0A1220'); g.addColorStop(.85,'#12233A'); g.addColorStop(1,'#16293F');
+  g.addColorStop(0,cssC(P.top)); g.addColorStop(.5,cssC(P.mid)); g.addColorStop(.82,cssC(P.low)); g.addColorStop(1,cssC(P.hor));
   sctx.fillStyle=g; sctx.fillRect(0,0,w,h);
-  // aurora ribbons
-  for(var rb=0;rb<3;rb++){
-    var yb=h*(.16+rb*.09), amp=h*.045*(1+rb*.35), ph=t*.00006*(rb+1)+rb*2.1;
-    var grad=sctx.createLinearGradient(0,yb-amp*2,0,yb+amp*2);
-    var cA=rb===1?'rgba(120,205,190,':'rgba(126,168,224,';
-    grad.addColorStop(0,cA+'0)'); grad.addColorStop(.5,cA+(0.065-rb*.012)+')'); grad.addColorStop(1,cA+'0)');
-    sctx.fillStyle=grad;
-    sctx.beginPath(); sctx.moveTo(0,yb);
-    for(var x=0;x<=w;x+=w/48){ sctx.lineTo(x, yb+Math.sin(x*.004+ph)*amp+Math.sin(x*.0013-ph*1.7)*amp*.7); }
-    sctx.lineTo(w,yb+amp*3); sctx.lineTo(0,yb+amp*3); sctx.closePath(); sctx.fill();
+  // rising sun
+  var sunT=Math.max(0,(p-.55)/.45);
+  if(sunT>0.01){
+    var sx=w*.63, sy=h*(1.04-sunT*.18), sr=h*(.06+sunT*.26);
+    var sg=sctx.createRadialGradient(sx,sy,0,sx,sy,sr*3);
+    sg.addColorStop(0,'rgba(255,216,172,'+(.9*sunT)+')');
+    sg.addColorStop(.22,'rgba(255,178,118,'+(.42*sunT)+')');
+    sg.addColorStop(1,'rgba(255,150,90,0)');
+    sctx.fillStyle=sg; sctx.beginPath(); sctx.arc(sx,sy,sr*3,0,6.28); sctx.fill();
   }
-  // stars
-  sctx.fillStyle='#DCE8F8';
-  for(var si2=0;si2<stars.length;si2++){
-    var s2=stars[si2], tw=.4+.6*Math.abs(Math.sin(t*.001+s2[3]));
-    sctx.globalAlpha=tw*.8;
-    sctx.fillRect(s2[0]*w, s2[1]*h, s2[2], s2[2]);
+  // aurora fades out as dawn approaches
+  var aF=1-Math.min(1,Math.max(0,(p-.3)/.3));
+  if(aF>0.02){
+    for(var rb=0;rb<3;rb++){
+      var yb=h*(.16+rb*.09), amp=h*.045*(1+rb*.35), ph=t*.00006*(rb+1)+rb*2.1;
+      var grad=sctx.createLinearGradient(0,yb-amp*2,0,yb+amp*2);
+      var cA=rb===1?'rgba(120,205,190,':'rgba(126,168,224,';
+      grad.addColorStop(0,cA+'0)'); grad.addColorStop(.5,cA+((0.065-rb*.012)*aF)+')'); grad.addColorStop(1,cA+'0)');
+      sctx.fillStyle=grad;
+      sctx.beginPath(); sctx.moveTo(0,yb);
+      for(var x=0;x<=w;x+=w/48){ sctx.lineTo(x, yb+Math.sin(x*.004+ph)*amp+Math.sin(x*.0013-ph*1.7)*amp*.7); }
+      sctx.lineTo(w,yb+amp*3); sctx.lineTo(0,yb+amp*3); sctx.closePath(); sctx.fill();
+    }
   }
-  sctx.globalAlpha=1;
+  // stars surrender to the light
+  var stF=1-Math.min(1,Math.max(0,(p-.5)/.35));
+  if(stF>0.02){
+    sctx.fillStyle='#DCE8F8';
+    for(var si2=0;si2<stars.length;si2++){
+      var s2=stars[si2], tw=.4+.6*Math.abs(Math.sin(t*.001+s2[3]));
+      sctx.globalAlpha=tw*.8*stF;
+      sctx.fillRect(s2[0]*w+mouseNX*6*s2[2], s2[1]*h, s2[2], s2[2]);
+    }
+    sctx.globalAlpha=1;
+  }
 }
 
 /* ================= snow (canvas 2D, layer 2) ================= */
@@ -557,7 +595,7 @@ var scrollVel=0;
 function drawSnow(t,dt){
   var w=snowC.width,h=snowC.height;
   nctx.clearRect(0,0,w,h);
-  nctx.fillStyle='#EAF2FB';
+  nctx.fillStyle=cssC(lerpC([234,242,251],[255,226,200],Math.max(0,(scrollS-.55)/.45)));
   for(var i=0;i<flakes.length;i++){
     var f=flakes[i];
     f.y+=(.018+f.z*.05)*dt*.06;
@@ -579,13 +617,31 @@ function resize(){
   glc.width=Math.round(w*glDPR); glc.height=Math.round(h*glDPR); glc.style.width=w+'px'; glc.style.height=h+'px';
   snowC.width=w*DPR; snowC.height=h*DPR; snowC.style.width=w+'px'; snowC.style.height=h+'px';
   if(gl) gl.viewport(0,0,glc.width,glc.height);
-  drawSky(perf());
+  drawSky(perf(),scrollS||0);
 }
 function perf(){ return performance.now(); }
 addEventListener('resize',resize);
 
 /* ================= main loop ================= */
 var scrollS=0, lastSortDir=null, lastT=perf(), lastScroll=0, lastSortT=-1e9;
+var orbitTarget=0, orbitCur=0, mouseNX=0, mouseNY=0, dragOn=false, dragX=0, dragStart=0;
+if(!mobile && !reduced){
+  document.addEventListener('mousemove',function(e){
+    mouseNX=(e.clientX/innerWidth)*2-1; mouseNY=(e.clientY/innerHeight)*2-1;
+    if(dragOn){
+      orbitTarget=Math.max(-1.15,Math.min(1.15, dragStart+(e.clientX-dragX)*-0.005));
+    }
+  });
+  document.addEventListener('mousedown',function(e){
+    if(e.button!==0) return;
+    if(e.target.closest('a,button,input,select,textarea,.mock,header,footer')) return;
+    dragOn=true; dragX=e.clientX; dragStart=orbitCur;
+    document.body.style.cursor='grabbing'; document.body.style.userSelect='none';
+  });
+  document.addEventListener('mouseup',function(){
+    dragOn=false; document.body.style.cursor=''; document.body.style.userSelect='';
+  });
+}
 var pbar=document.getElementById('pbar');
 var running=true;
 var LIVE=TOTAL, frameAcc=0, frameCnt=0, degradeSteps=0;
@@ -619,20 +675,25 @@ function tick(t,force){
     frameAcc=0; frameCnt=0;
   }
   var doc=document.documentElement;
-  var target=(scrollY||doc.scrollTop)/((doc.scrollHeight-innerHeight)||1);
+  var target=forceP!=null?forceP:(scrollY||doc.scrollTop)/((doc.scrollHeight-innerHeight)||1);
+  if(forceP!=null) scrollS=forceP;
   scrollVel=(scrollY-lastScroll); lastScroll=scrollY;
   scrollS += (target-scrollS)*(reduced?1:.065);
   pbar.style.width=(target*100)+'%';
 
-  drawSky(t);
+  drawSky(t,scrollS);
   if(FLAKES) drawSnow(t,dt);
+  orbitCur+=(orbitTarget-orbitCur)*.08;
+  if(!dragOn && Math.abs(scrollVel)>3) orbitTarget*=.9;   // scrolling gently reclaims the camera
 
   if(gl){
     var cam=camAt(reduced?.1:scrollS);
-    var V=lookAt(cam.ex,cam.ey,cam.ez, 0,cam.ly,0);
+    var thF=cam.th+orbitCur+mouseNX*.045;
+    var ex=Math.cos(thF)*cam.r, ey=cam.h-mouseNY*5, ez=Math.sin(thF)*cam.r;
+    var V=lookAt(ex,ey,ez, 0,cam.ly,0);
     var P=persp(50*Math.PI/180, glc.width/glc.height, 1, 1400);
     // view dir (from eye toward center)
-    var dx=0-cam.ex, dy=cam.ly-cam.ey, dz=0-cam.ez, dl=Math.hypot(dx,dy,dz);
+    var dx=0-ex, dy=cam.ly-ey, dz=0-ez, dl=Math.hypot(dx,dy,dz);
     dx/=dl;dy/=dl;dz/=dl;
     var need=!lastSortDir || ((t-lastSortT)>180 && (dx*lastSortDir[0]+dy*lastSortDir[1]+dz*lastSortDir[2])<0.9997);
     if(need){
@@ -652,7 +713,11 @@ function tick(t,force){
     gl.uniformMatrix4fv(uV,false,V);
     gl.uniformMatrix4fv(uP,false,P);
     gl.uniform1f(uFogD,cam.fog*0.14);
-    gl.uniform3f(uFogC,.082,.148,.226);
+    var wm=Math.max(0,Math.min(1,(scrollS-.5)/.42));
+    wm=wm*wm*(3-2*wm);
+    gl.uniform1f(uWarmLoc,wm);
+    var fogC=lerpC([.082,.148,.226],[.52,.34,.27],wm*.9);
+    gl.uniform3f(uFogC,fogC[0],fogC[1],fogC[2]);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,LIVE);
   }
   requestAnimationFrame(tick);
@@ -665,7 +730,7 @@ if(document.hidden) document.documentElement.classList.add('no-anim');
 document.addEventListener('visibilitychange',function(){
   if(!document.hidden){
     running=true;
-    scrollS=(scrollY||document.documentElement.scrollTop)/((document.documentElement.scrollHeight-innerHeight)||1);
+    scrollS=forceP!=null?forceP:(scrollY||document.documentElement.scrollTop)/((document.documentElement.scrollHeight-innerHeight)||1);
     lastSortDir=null; tick(perf(),true);
     setTimeout(function(){ document.documentElement.classList.remove('no-anim'); },900);
   }

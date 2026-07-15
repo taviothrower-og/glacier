@@ -846,15 +846,22 @@
   if(!store.schedDefs) store.schedDefs={workDays:['Monday','Tuesday','Wednesday','Thursday','Friday'],byDay:{}};
   if(!store.learnTopics) store.learnTopics = store.legacyOwner ? ['vibe'] : [];
   if(!store.groupDefs) store.groupDefs = GROUPS.map(function(g){return {key:g.key,label:g.label};});
-  // One-time: flag the owner's key task times so multi-user reminders match the
-  // original ~8/day cadence.
-  if(store.legacyOwner && !store.remindMigrated && store.schedDefs.byDay){
-    var KEYW=['06:45','07:00','11:30','16:00','18:30','21:30','23:10'], KEYO=['07:30','07:50','10:15','12:00','15:00','21:30','23:10'];
+  // Flag the owner's key task times so reminders match the original ~8/day
+  // cadence. Self-healing: re-runs whenever the schedule has NO reminder flags
+  // at all (a stale cross-device sync once wiped them), never when the user
+  // has deliberately configured any.
+  if(store.legacyOwner && store.schedDefs.byDay && Object.keys(store.schedDefs.byDay).length){
+    var anyRemind=false;
     Object.keys(store.schedDefs.byDay).forEach(function(d){
-      var keys=store.schedDefs.workDays.indexOf(d)>=0?KEYW:KEYO;
-      (store.schedDefs.byDay[d]||[]).forEach(function(b){ (b.tasks||[]).forEach(function(t){ if(keys.indexOf(t.t)>=0) t.remind=true; }); });
+      (store.schedDefs.byDay[d]||[]).forEach(function(b){ (b.tasks||[]).forEach(function(t){ if(t.remind) anyRemind=true; }); });
     });
-    store.remindMigrated=1;
+    if(!anyRemind && !(store.userTasks||[]).some(function(t){return t.remind;})){
+      var KEYW=['06:45','07:00','11:30','16:00','18:30','21:30','23:10'], KEYO=['07:30','07:50','10:15','12:00','15:00','21:30','23:10'];
+      Object.keys(store.schedDefs.byDay).forEach(function(d){
+        var keys=store.schedDefs.workDays.indexOf(d)>=0?KEYW:KEYO;
+        (store.schedDefs.byDay[d]||[]).forEach(function(b){ (b.tasks||[]).forEach(function(t){ if(keys.indexOf(t.t)>=0) t.remind=true; }); });
+      });
+    }
   }
 
   function save(){ try{ localStorage.setItem(KEY,JSON.stringify(store)); queueSync(); return true; }catch(e){ return false; } }
